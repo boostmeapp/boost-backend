@@ -1,0 +1,830 @@
+{
+  "info": {
+    "name": "BoostMe API - Complete Collection",
+    "description": "Complete API testing collection for BoostMe platform with wallet, payments, boosts, and payouts",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "boost_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "payment_intent_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "payout_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stripe_connect_account_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', response.access_token);",
+                  "    pm.collectionVariables.set('user_id', response.user.id);",
+                  "    console.log('Access token saved:', response.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"password\": \"Test123!@#\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', response.access_token);",
+                  "    pm.collectionVariables.set('user_id', response.user.id);",
+                  "    console.log('Access token saved:', response.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"password\": \"Test123!@#\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet Management",
+      "item": [
+        {
+          "name": "Get My Wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const wallet = pm.response.json();",
+                  "    console.log('Wallet Balance:', wallet.balance);",
+                  "    console.log('Total Earned:', wallet.totalEarned);",
+                  "    console.log('Total Withdrawn:', wallet.totalWithdrawn);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/wallet",
+              "host": ["{{base_url}}"],
+              "path": ["wallet"]
+            }
+          }
+        },
+        {
+          "name": "Get Wallet Balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/wallet/balance",
+              "host": ["{{base_url}}"],
+              "path": ["wallet", "balance"]
+            }
+          }
+        },
+        {
+          "name": "Add Earnings (Test Only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 25.50\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/wallet/add-earnings",
+              "host": ["{{base_url}}"],
+              "path": ["wallet", "add-earnings"]
+            },
+            "description": "Test endpoint to add earnings manually (should be protected/admin only in production)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stripe Connect",
+      "item": [
+        {
+          "name": "Create Connect Account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('stripe_connect_account_id', response.accountId);",
+                  "    console.log('Stripe Connect Account ID:', response.accountId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stripe-connect/create-account",
+              "host": ["{{base_url}}"],
+              "path": ["stripe-connect", "create-account"]
+            }
+          }
+        },
+        {
+          "name": "Get Onboarding Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('Onboarding URL:', response.url);",
+                  "    console.log('Expires at:', new Date(response.expiresAt * 1000));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stripe-connect/onboarding-link",
+              "host": ["{{base_url}}"],
+              "path": ["stripe-connect", "onboarding-link"]
+            }
+          }
+        },
+        {
+          "name": "Get Account Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stripe-connect/account",
+              "host": ["{{base_url}}"],
+              "path": ["stripe-connect", "account"]
+            }
+          }
+        },
+        {
+          "name": "Get Login Link",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stripe-connect/login-link",
+              "host": ["{{base_url}}"],
+              "path": ["stripe-connect", "login-link"]
+            }
+          }
+        },
+        {
+          "name": "Get Account Balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stripe-connect/balance",
+              "host": ["{{base_url}}"],
+              "path": ["stripe-connect", "balance"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Video Management",
+      "item": [
+        {
+          "name": "Create Video",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const video = pm.response.json();",
+                  "    pm.collectionVariables.set('video_id', video._id);",
+                  "    console.log('Video ID saved:', video._id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Test Video for Boosting\",\n  \"description\": \"This is a test video to demonstrate boost functionality\",\n  \"videoUrl\": \"https://example.com/video.mp4\",\n  \"thumbnailUrl\": \"https://example.com/thumbnail.jpg\",\n  \"duration\": 120,\n  \"category\": \"Technology\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/videos",
+              "host": ["{{base_url}}"],
+              "path": ["videos"]
+            }
+          }
+        },
+        {
+          "name": "Get My Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/videos/my-videos",
+              "host": ["{{base_url}}"],
+              "path": ["videos", "my-videos"]
+            }
+          }
+        },
+        {
+          "name": "Get Video by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/videos/{{video_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["videos", "{{video_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Boost Payment & Purchase",
+      "item": [
+        {
+          "name": "1. Create Boost Payment Intent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('payment_intent_id', response.paymentIntentId);",
+                  "    console.log('Payment Intent ID:', response.paymentIntentId);",
+                  "    console.log('Client Secret:', response.clientSecret);",
+                  "    console.log('');",
+                  "    console.log('⚠️ NEXT STEP: Complete payment in Stripe (use test card: 4242 4242 4242 4242)');",
+                  "    console.log('Then call \"2. Confirm Boost Payment\" endpoint');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"{{video_id}}\",\n  \"amount\": 10\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/payment/boost/create-intent",
+              "host": ["{{base_url}}"],
+              "path": ["payment", "boost", "create-intent"]
+            },
+            "description": "Creates a Stripe payment intent for boosting a video. Amount is in EUR (€1-€100)."
+          }
+        },
+        {
+          "name": "2. Confirm Boost Payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('Payment confirmed!');",
+                  "    console.log('Video ID:', response.videoId);",
+                  "    console.log('');",
+                  "    console.log('⚠️ NEXT STEP: Call \"3. Create Boost\" endpoint to activate the boost');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{payment_intent_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/payment/boost/confirm",
+              "host": ["{{base_url}}"],
+              "path": ["payment", "boost", "confirm"]
+            },
+            "description": "Confirms the boost payment was successful. Call this after Stripe confirms payment."
+          }
+        },
+        {
+          "name": "3. Create Boost (After Payment)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const boost = pm.response.json();",
+                  "    pm.collectionVariables.set('boost_id', boost._id);",
+                  "    console.log('Boost ID:', boost._id);",
+                  "    console.log('Status:', boost.status);",
+                  "    console.log('Amount:', '€' + boost.amount);",
+                  "    console.log('Target Views:', boost.targetViews);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"{{video_id}}\",\n  \"amount\": 10,\n  \"stripePaymentIntentId\": \"{{payment_intent_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/boosts",
+              "host": ["{{base_url}}"],
+              "path": ["boosts"]
+            },
+            "description": "Creates the boost after successful payment. This activates the boost and reward pool."
+          }
+        },
+        {
+          "name": "Get My Boosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/boosts/my-boosts",
+              "host": ["{{base_url}}"],
+              "path": ["boosts", "my-boosts"]
+            }
+          }
+        },
+        {
+          "name": "Get Boost by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/boosts/{{boost_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["boosts", "{{boost_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Boost",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/boosts/{{boost_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["boosts", "{{boost_id}}", "cancel"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Get My Transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["transactions"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Transactions by Type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/by-type?type=boost-purchase&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["transactions", "by-type"],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "boost-purchase",
+                  "description": "Options: boost-purchase, reward-earned, payout, refund"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Total Spending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/total-spending",
+              "host": ["{{base_url}}"],
+              "path": ["transactions", "total-spending"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payouts (Automatic via Cron)",
+      "description": "Payouts are processed automatically via cron job (weekly). Users cannot manually request payouts - they happen automatically when balance >= €20.",
+      "item": [
+        {
+          "name": "Get My Payouts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/my-payouts?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "my-payouts"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Payout by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/{{payout_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "{{payout_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Payout Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/{{payout_id}}/logs",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "{{payout_id}}", "logs"]
+            },
+            "description": "Get detailed logs for a specific payout (for debugging)"
+          }
+        },
+        {
+          "name": "Get Batch Payouts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/batch/{{batch_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "batch", "{{batch_id}}"]
+            },
+            "description": "Get all payouts in a specific batch (cron run)"
+          }
+        },
+        {
+          "name": "Get Batch Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/batch/{{batch_id}}/stats",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "batch", "{{batch_id}}", "stats"]
+            },
+            "description": "Get statistics for a batch (total amount, success count, etc.)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rewards (Watch Videos)",
+      "item": [
+        {
+          "name": "Record Video Watch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"{{video_id}}\",\n  \"watchDuration\": 120,\n  \"completed\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/rewards/watch",
+              "host": ["{{base_url}}"],
+              "path": ["rewards", "watch"]
+            },
+            "description": "Record watching a video. If video is boosted and eligible, earnings are added to wallet."
+          }
+        },
+        {
+          "name": "Get My Rewards",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/rewards/my-rewards?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["rewards", "my-rewards"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Reward Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/rewards/stats",
+              "host": ["{{base_url}}"],
+              "path": ["rewards", "stats"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin (Testing Only)",
+      "item": [
+        {
+          "name": "Get All Wallets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/wallet/admin/all",
+              "host": ["{{base_url}}"],
+              "path": ["wallet", "admin", "all"]
+            },
+            "description": "Admin endpoint to view all wallets"
+          }
+        },
+        {
+          "name": "Get All Transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/admin/all?limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["transactions", "admin", "all"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get All Boosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/boosts/admin/all?limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["boosts", "admin", "all"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Trigger Weekly Payouts (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const stats = pm.response.json();",
+                  "    console.log('Payout Batch Triggered!');",
+                  "    console.log('Total Payouts:', stats.totalPayouts);",
+                  "    console.log('Total Amount:', '€' + stats.totalAmount);",
+                  "    console.log('Pending:', stats.pendingCount);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/admin/trigger-weekly",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "admin", "trigger-weekly"]
+            },
+            "description": "Admin only: Manually trigger weekly payout processing (normally runs via cron every Sunday)"
+          }
+        },
+        {
+          "name": "Retry Failed Payouts (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/admin/retry-failed",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "admin", "retry-failed"]
+            },
+            "description": "Admin only: Manually retry all failed payouts that are ready for retry"
+          }
+        },
+        {
+          "name": "Cancel Payout (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payouts/admin/{{payout_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["payouts", "admin", "{{payout_id}}", "cancel"]
+            },
+            "description": "Admin only: Cancel a pending payout (only works if status is PENDING)"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,722 @@
+{
+  "info": {
+    "name": "BoostMe API",
+    "description": "API collection for BoostMe video platform with monetization",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "videoId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken', response.accessToken);",
+                  "    pm.collectionVariables.set('userId', response.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken', response.accessToken);",
+                  "    pm.collectionVariables.set('userId', response.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Request Upload URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('uploadUrl', response.uploadUrl);",
+                  "    pm.collectionVariables.set('s3Key', response.key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"video\",\n  \"fileName\": \"my-video.mp4\",\n  \"contentType\": \"video/mp4\",\n  \"fileSize\": 10485760\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/upload/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["upload", "request"]
+            },
+            "description": "Get a presigned URL to upload file directly to S3"
+          }
+        },
+        {
+          "name": "Get Signed URL (Download)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/upload/signed-url/videos/user123/video.mp4",
+              "host": ["{{baseUrl}}"],
+              "path": ["upload", "signed-url", "videos", "user123", "video.mp4"]
+            },
+            "description": "Get a presigned URL to download/view a file from S3"
+          }
+        },
+        {
+          "name": "Delete File",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/upload/videos/user123/video.mp4",
+              "host": ["{{baseUrl}}"],
+              "path": ["upload", "videos", "user123", "video.mp4"]
+            },
+            "description": "Delete a file from S3"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Videos",
+      "item": [
+        {
+          "name": "Create Video",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('videoId', response._id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My Amazing Video\",\n  \"description\": \"This is a test video\",\n  \"rawVideoKey\": \"videos/user123/video.mp4\",\n  \"thumbnailUrl\": \"thumbnails/user123/thumb.jpg\",\n  \"duration\": 120,\n  \"tags\": [\"tutorial\", \"tech\"],\n  \"visibility\": \"public\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos"]
+            }
+          }
+        },
+        {
+          "name": "Get All Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "isBoosted",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Video by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Video",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Video Title\",\n  \"description\": \"Updated description\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Video",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get User Videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos/user/me?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "user", "me"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment & Boost",
+      "item": [
+        {
+          "name": "Create Payment Intent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('paymentIntentId', response.paymentIntentId);",
+                  "    pm.collectionVariables.set('clientSecret', response.clientSecret);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payment/create-intent",
+              "host": ["{{baseUrl}}"],
+              "path": ["payment", "create-intent"]
+            },
+            "description": "Create a Stripe payment intent for boosting a video (€1-€100)"
+          }
+        },
+        {
+          "name": "Boost Video",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{paymentIntentId}}\",\n  \"videoId\": \"{{videoId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payment/boost-video",
+              "host": ["{{baseUrl}}"],
+              "path": ["payment", "boost-video"]
+            },
+            "description": "Boost a video after successful Stripe payment"
+          }
+        },
+        {
+          "name": "Get User Boosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/boost/my-boosts",
+              "host": ["{{baseUrl}}"],
+              "path": ["boost", "my-boosts"]
+            }
+          }
+        },
+        {
+          "name": "Get Video Boosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/boost/video/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["boost", "video", "{{videoId}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Boost",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/boost/:boostId/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["boost", ":boostId", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "Get Boost Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/boost/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["boost", "config"]
+            },
+            "description": "Get reward configuration (min/max amounts, percentages, etc.)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rewards",
+      "item": [
+        {
+          "name": "Record Watch",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"{{videoId}}\",\n  \"watchDuration\": 15\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rewards/watch",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards", "watch"]
+            },
+            "description": "Record a video watch and earn rewards (if qualified: ≥10s OR ≥30%)"
+          }
+        },
+        {
+          "name": "Get My Balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rewards/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards", "balance"]
+            }
+          }
+        },
+        {
+          "name": "Get My Earnings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rewards/earnings",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards", "earnings"]
+            }
+          }
+        },
+        {
+          "name": "Get Video Reward Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rewards/video/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards", "video", "{{videoId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stripe Connect",
+      "item": [
+        {
+          "name": "Create Connect Account",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"creator@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/stripe-connect/account",
+              "host": ["{{baseUrl}}"],
+              "path": ["stripe-connect", "account"]
+            },
+            "description": "Create a Stripe Connect Express account for creator payouts"
+          }
+        },
+        {
+          "name": "Get Onboarding Link",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/stripe-connect/onboarding-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["stripe-connect", "onboarding-link"]
+            },
+            "description": "Get onboarding URL for creator to complete Stripe Connect setup"
+          }
+        },
+        {
+          "name": "Get Dashboard Link",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/stripe-connect/dashboard-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["stripe-connect", "dashboard-link"]
+            },
+            "description": "Get Stripe Express Dashboard access link"
+          }
+        },
+        {
+          "name": "Get Account Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stripe-connect/account/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["stripe-connect", "account", "status"]
+            }
+          }
+        },
+        {
+          "name": "Get Balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stripe-connect/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["stripe-connect", "balance"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Get My Transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Ban User",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId/toggle-ban",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId", "toggle-ban"]
+            }
+          }
+        },
+        {
+          "name": "Get All Transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/transactions?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "transactions"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get All Boosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/boosts?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "boosts"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get All Reward Balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rewards/balances?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "rewards", "balances"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

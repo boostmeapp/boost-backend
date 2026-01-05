@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # Redis for BullMQ job queue
+  redis:
+    image: redis:7-alpine
+    container_name: boostme-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB (Optional - if you want to run MongoDB locally instead of Atlas)
+  # Uncomment this section if you want to use local MongoDB
+  # mongodb:
+  #   image: mongo:7
+  #   container_name: boostme-mongodb
+  #   ports:
+  #     - '27017:27017'
+  #   volumes:
+  #     - mongodb-data:/data/db
+  #   environment:
+  #     MONGO_INITDB_ROOT_USERNAME: admin
+  #     MONGO_INITDB_ROOT_PASSWORD: admin123
+  #     MONGO_INITDB_DATABASE: boostme
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # Redis Commander - Web UI for Redis (Optional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: boostme-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - '8081:8081'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  # mongodb-data:  # Uncomment if using local MongoDB
