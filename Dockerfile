@@ -1,23 +1,15 @@
-# ---------- Build stage ----------
-FROM node:18-alpine AS builder
+FROM node:18-alpine
+
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY . .
+
+# Build NestJS app
 RUN npm run build
 
-
-# ---------- Run stage ----------
-FROM node:18-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-COPY --from=builder /app/dist ./dist
-
 EXPOSE 3000
+
 CMD ["node", "dist/main.js"]
