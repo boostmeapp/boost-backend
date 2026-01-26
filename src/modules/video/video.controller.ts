@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser, Public } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
 
+
 @Controller('videos')
 export class VideoController {
   constructor(private readonly videoService: VideoService) {}
@@ -27,6 +28,32 @@ export class VideoController {
   async create(@CurrentUser() user: User, @Body() createVideoDto: CreateVideoDto) {
     return this.videoService.create(user.id, createVideoDto);
   }
+@Get('feed/following')
+@UseGuards(JwtAuthGuard)
+async getFollowingFeed(
+  @CurrentUser() user: User,
+  @Query('page') page?: string,
+  @Query('limit') limit?: string,
+) {
+  return this.videoService.getFollowingFeed(
+    user.id,
+    page ? Number(page) : 1,
+    limit ? Number(limit) : 20,
+  );
+}
+@Get('feed/following/cursor')
+@UseGuards(JwtAuthGuard)
+async getFollowingFeedCursor(
+  @CurrentUser() user: User,
+  @Query('cursor') cursor?: string,
+  @Query('limit') limit?: string,
+) {
+  return this.videoService.getFollowingFeedCursor(
+    user.id,
+    limit ? Number(limit) : 20,
+    cursor,
+  );
+}
 
   @Get('my-videos')
   @UseGuards(JwtAuthGuard)

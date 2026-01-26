@@ -44,6 +44,8 @@ export class Boost extends Document {
     required: true,
   })
   package: BoostPackage;
+@Prop({ required: false })
+endDate?: Date;
 
   @Prop({ required: true })
   amount: number; // Price paid
@@ -60,8 +62,6 @@ export class Boost extends Document {
   @Prop({ required: true })
   startDate: Date;
 
-  @Prop({ required: true })
-  endDate: Date;
 
   @Prop({ type: String, enum: BoostStatus, default: BoostStatus.PENDING, index: true })
   status: BoostStatus;

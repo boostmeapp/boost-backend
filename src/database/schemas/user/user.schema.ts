@@ -58,6 +58,17 @@ export class User extends Document {
 
   createdAt: Date;
   updatedAt: Date;
+  @Prop({ unique: true, sparse: true, lowercase: true, trim: true })
+  username?: string;
+
+  @Prop()
+  profileImage?: string; // S3 / CDN URL
+
+  @Prop()
+  bio?: string;
+
+  @Prop()
+  gender?: string;
 
   async validatePassword(password: string): Promise<boolean> {
     return bcrypt.compare(password, this.password);
@@ -65,6 +76,7 @@ export class User extends Document {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+UserSchema.set('autoIndex', true);
 
 // Hash password before saving
 UserSchema.pre('save', async function (next) {
@@ -100,3 +112,21 @@ UserSchema.index({ stripeConnectAccountId: 1, stripeOnboardingComplete: 1 }); //
 UserSchema.index({ role: 1, isActive: 1 }); // Admin queries
 UserSchema.index({ isBanned: 1 }); // Security queries
 UserSchema.index({ createdAt: -1 }); // Recent users
+UserSchema.index({ username: 1 });
+
+// 🔍 TEXT SEARCH INDEX (FOR USER SEARCH)
+UserSchema.index(
+  {
+    firstName: 'text',
+    lastName: 'text',
+    email: 'text',
+  },
+  {
+    weights: {
+      firstName: 3,
+      lastName: 3,
+      email: 1,
+    },
+    name: 'UserTextSearch',
+  },
+);

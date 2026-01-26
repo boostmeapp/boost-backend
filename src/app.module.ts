@@ -25,14 +25,16 @@ import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './common/guards';
 import { AllExceptionsFilter } from './common/filters';
 import { ENV } from './config';
+import { CommentsModule } from './modules/comments/comments.module';
+import { SearchModule } from './modules/search/search/search.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
-      cache: true,
-    }),
+ConfigModule.forRoot({
+  isGlobal: true,
+  envFilePath: '.env',
+})
+,
     ScheduleModule.forRoot(),
     // Rate Limiting for Production
     ThrottlerModule.forRootAsync({
@@ -92,6 +94,8 @@ import { ENV } from './config';
     TransactionModule,
     PaymentModule,
     BoostModule,
+    CommentsModule,
+    SearchModule,
     RewardModule,
     UploadModule,
     VideoModule,

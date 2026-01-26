@@ -5,12 +5,14 @@ import { VideoService } from './video.service';
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { UploadModule } from '../upload/upload.module';
 import { LikesModule } from '../likes/likes.module';
+import { FollowsModule } from '../follows/follows.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Video.name, schema: VideoSchema }]),
     UploadModule,
     LikesModule,
+    FollowsModule
   ],
   controllers: [VideoController],
   providers: [VideoService],

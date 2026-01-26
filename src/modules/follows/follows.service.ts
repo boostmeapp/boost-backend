@@ -39,8 +39,12 @@ export class FollowsService {
     }
 
     // Create follow relationship
-    const followDoc = new this.followModel({ follower, following });
-    await followDoc.save();
+   const followDoc = await this.followModel.findOneAndUpdate(
+  { follower, following },
+  { follower, following },
+  { upsert: true, new: true },
+);
+
 
     // Update follower/following counts
     await Promise.all([
@@ -56,25 +60,28 @@ export class FollowsService {
   }
 
   // Unfollow a user
-  async unfollow(follower: string, following: string): Promise<void> {
-    const result = await this.followModel
-      .findOneAndDelete({ follower, following })
-      .exec();
+ async unfollow(follower: string, following: string): Promise<void> {
+  const result = await this.followModel
+    .findOneAndDelete({ follower, following })
+    .exec();
 
-    if (!result) {
-      throw new NotFoundException('You are not following this user');
-    }
-
-    // Update follower/following counts
-    await Promise.all([
-      this.userModel.findByIdAndUpdate(follower, {
-        $inc: { followingCount: -1 },
-      }),
-      this.userModel.findByIdAndUpdate(following, {
-        $inc: { followerCount: -1 },
-      }),
-    ]);
+  if (!result) {
+    throw new NotFoundException('You are not following this user');
   }
+
+  // ✅ SAFE decrement (negative count se bachaata hai)
+  await Promise.all([
+    this.userModel.updateOne(
+      { _id: follower, followingCount: { $gt: 0 } },
+      { $inc: { followingCount: -1 } },
+    ),
+    this.userModel.updateOne(
+      { _id: following, followerCount: { $gt: 0 } },
+      { $inc: { followerCount: -1 } },
+    ),
+  ]);
+}
+
 
   // Get list of followers with pagination
   async getFollowers(userId: string, page: number = 1, limit: number = 20) {
@@ -111,7 +118,7 @@ export class FollowsService {
   // Check if user A is following user B
   async isFollowing(follower: string, following: string): Promise<boolean> {
     const follow = await this.followModel
-      .findOne({ follower, following })
+      .exists({ follower, following })
       .exec();
     return !!follow;
   }

@@ -11,6 +11,7 @@ export enum VideoProcessingStatus {
 
 // HLS chunk info
 export class VideoChunk {
+  
   @Prop({ required: true })
   quality: string; // '360p', '720p', '1080p'
 
@@ -129,6 +130,8 @@ export class Video extends Document {
 }
 
 export const VideoSchema = SchemaFactory.createForClass(Video);
+VideoSchema.set('autoIndex', true);
+
 
 // Add pagination plugin
 VideoSchema.plugin(mongoosePaginate as any);
@@ -143,3 +146,19 @@ VideoSchema.index({ user: 1, processingStatus: 1, createdAt: -1 }); // User's vi
 VideoSchema.index({ viewCount: -1, createdAt: -1 }); // Trending videos
 VideoSchema.index({ hasRewardPool: 1, isBoosted: 1 }); // Reward-enabled videos
 VideoSchema.index({ boostEndDate: 1, isBoosted: 1 }); // Expiring boosts cleanup
+// 🔍 TEXT SEARCH INDEX (FOR SEARCH SYSTEM)
+VideoSchema.index(
+  {
+    title: 'text',
+    caption: 'text',
+    tags: 'text',
+  },
+  {
+    weights: {
+      title: 5,
+      caption: 3,
+      tags: 1,
+    },
+    name: 'VideoTextSearch',
+  },
+);

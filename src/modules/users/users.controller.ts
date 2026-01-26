@@ -8,23 +8,41 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateUserDto, ChangePasswordDto } from './dto';
 import { JwtAuthGuard } from '../../common/guards';
-import { CurrentUser, Roles } from '../../common/decorators';
+import { CurrentUser, Public, Roles } from '../../common/decorators';
 import { User, UserRole } from '../../database/schemas/user/user.schema';
 import { RolesGuard } from '../../common/guards';
+import { VideoService } from '../video/video.service';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService,private readonly videoService: VideoService,) {}
+@Get(':id/profile')
+@Public()
+async getProfile(
+  @Param('id') userId: string,
+  @CurrentUser() viewer?: User,
+) {
+  return this.usersService.getProfile(viewer?.id ?? null, userId);
+}
 
   @Get('me')
   getCurrentUser(@CurrentUser() user: User) {
     return user;
   }
+@Patch('me/profile-image')
+@UseGuards(JwtAuthGuard)
+async updateProfileImage(
+  @CurrentUser() user: User,
+  @Body('profileImage') profileImage: string,
+) {
+  return this.usersService.update(user.id, { profileImage });
+}
 
   @Get()
   @Roles(UserRole.ADMIN)
@@ -57,4 +75,18 @@ export class UsersController {
   remove(@Param('id') id: string) {
     return this.usersService.remove(id);
   }
+  @Get(':id/videos')
+@Public()
+async getUserProfileVideos(
+  @Param('id') userId: string,
+  @Query('page') page?: string,
+  @Query('limit') limit?: string,
+) {
+  return this.videoService.getProfileVideos(
+    userId,
+    page ? Number(page) : 1,
+    limit ? Number(limit) : 12,
+  );
+}
+
 }

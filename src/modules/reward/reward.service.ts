@@ -15,6 +15,7 @@ import { Video } from '../../database/schemas/video/video.schema';
 import { Boost, REWARD_CONFIG } from '../../database/schemas/boost/boost.schema';
 import { TransactionService } from '../transaction/transaction.service';
 import { TransactionType, TransactionStatus, PaymentMethod } from '../../database/schemas/transaction/transaction.schema';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class RewardService {
@@ -31,6 +32,7 @@ export class RewardService {
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(Boost.name) private boostModel: Model<Boost>,
     private transactionService: TransactionService,
+      private walletService: WalletService, 
   ) {}
 
   async createVideoReward(boostId: string, videoId: string): Promise<VideoReward> {
@@ -197,7 +199,12 @@ export class RewardService {
     }
 
     // Update user reward balance
-    const updatedBalance = await this.updateUserRewardBalance(userId, earnedAmount);
+// Update reward balance (analytics / stats)
+const updatedBalance = await this.updateUserRewardBalance(userId, earnedAmount);
+await this.walletService.addEarnings(userId, earnedAmount);
+
+// ✅ ALSO update withdrawable wallet
+await this.walletService.addEarnings(userId, earnedAmount);
 
     // Update global stats
     await this.updateGlobalStats(0, earnedAmount);
@@ -249,29 +256,30 @@ export class RewardService {
     });
   }
 
-  private async updateUserRewardBalance(
-    userId: string,
-    amount: number,
-  ): Promise<UserRewardBalance> {
-    let balance = await this.userRewardBalanceModel
-      .findOne({ user: new Types.ObjectId(userId) })
-      .exec();
+ private async updateUserRewardBalance(
+  userId: string,
+  amount: number,
+): Promise<UserRewardBalance> {
+  let balance = await this.userRewardBalanceModel
+    .findOne({ user: new Types.ObjectId(userId) })
+    .exec();
 
-    if (!balance) {
-      balance = new this.userRewardBalanceModel({
-        user: new Types.ObjectId(userId),
-        availableBalance: 0,
-        totalEarned: 0,
-        totalWithdrawn: 0,
-        pendingWithdrawal: 0,
-      });
-    }
-
-    balance.availableBalance += amount;
-    balance.totalEarned += amount;
-
-    return balance.save();
+  if (!balance) {
+    balance = new this.userRewardBalanceModel({
+      user: new Types.ObjectId(userId),
+      availableBalance: 0,
+      totalEarned: 0,
+      totalWithdrawn: 0,
+      pendingWithdrawal: 0,
+    });
   }
+
+  balance.availableBalance += amount;
+  balance.totalEarned += amount;
+
+  return balance.save();
+}
+
 
   private async updateGlobalStats(
     poolAdded: number,

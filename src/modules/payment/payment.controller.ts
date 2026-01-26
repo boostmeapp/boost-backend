@@ -17,10 +17,13 @@ import { Request } from 'express';
 import { IsNumber, IsString, Min, Max } from 'class-validator';
 
 // DTOs for boost payments
+import { Type } from 'class-transformer';
+
 class CreateBoostPaymentDto {
   @IsString()
   videoId: string;
 
+  @Type(() => Number)
   @IsNumber()
   @Min(1)
   @Max(100)

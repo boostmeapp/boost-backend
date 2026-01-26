@@ -11,10 +11,15 @@ import { User } from '../../database/schemas/user/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { FollowsService } from '../follows/follows.service';
+import { Video } from '../../database/schemas/video/video.schema';
+
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+  constructor(@InjectModel(User.name) private userModel: Model<User>, 
+  @InjectModel(Video.name) private videoModel: Model<Video>,
+  private readonly followsService: FollowsService,) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     const existingUser = await this.userModel
@@ -32,6 +37,28 @@ export class UsersService {
   async findAll(): Promise<User[]> {
     return this.userModel.find().exec();
   }
+async getProfile(viewerId: string | null, userId: string) {
+  const user = await this.userModel
+    .findById(userId)
+  .select(
+  'username firstName lastName profileImage bio gender followerCount followingCount videoCount',
+)
+
+    .lean();
+
+  if (!user) {
+    throw new NotFoundException('User not found');
+  }
+
+  const isFollowing = viewerId
+    ? await this.followsService.isFollowing(viewerId, userId)
+    : false;
+
+  return {
+    user,
+    isFollowing,
+  };
+}
 
   async findOne(id: string): Promise<User> {
     const user = await this.userModel.findById(id).exec();

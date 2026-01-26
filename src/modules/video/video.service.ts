@@ -8,13 +8,16 @@ import { Model, Types } from 'mongoose';
 import { Video, VideoProcessingStatus } from '../../database/schemas/video/video.schema';
 import { CreateVideoDto, UpdateVideoDto } from './dto';
 import { LikesService } from '../likes/likes.service';
+import { FollowsService } from '../follows/follows.service';
+
 
 @Injectable()
 export class VideoService {
   constructor(
     @InjectModel(Video.name) private videoModel: Model<Video>,
     private readonly likesService: LikesService,
-  ) {}
+    private readonly followsService: FollowsService,
+  ) { }
 
   /**
    * Create a new video record (all videos are public)
@@ -29,8 +32,11 @@ export class VideoService {
       rawVideoKey: createVideoDto.rawVideoKey,
       thumbnailUrl: createVideoDto.thumbnailUrl,
       duration: createVideoDto.duration,
-      processingStatus: VideoProcessingStatus.UPLOADING,
-      processingProgress: 0,
+
+      // 🔥 OPTION 1: AUTO READY
+      processingStatus: VideoProcessingStatus.READY,
+      processingProgress: 100,
+
       viewCount: 0,
       likeCount: 0,
       commentCount: 0,
@@ -39,6 +45,120 @@ export class VideoService {
 
     return video.save();
   }
+
+async getFollowingFeed(
+  currentUserId: string,
+  page: number = 1,
+  limit: number = 20,
+) {
+  const followingIds = await this.followsService.getFollowingIds(currentUserId);
+
+  if (followingIds.length === 0) {
+    return {
+      data: [],
+      meta: {
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+        hasNextPage: false,
+      },
+    };
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [videos, total] = await Promise.all([
+    this.videoModel
+      .find({
+        user: { $in: followingIds },
+        processingStatus: VideoProcessingStatus.READY,
+      })
+      .populate('user', 'firstName lastName email')
+      .sort({
+        isBoosted: -1,      // 🔥 boosted first
+        boostScore: -1,     // 🔥 higher score first
+        createdAt: -1,      // newest last priority
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    this.videoModel.countDocuments({
+      user: { $in: followingIds },
+      processingStatus: VideoProcessingStatus.READY,
+    }),
+  ]);
+
+  return {
+    data: videos,
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      hasNextPage: page * limit < total,
+    },
+  };
+}
+async getFollowingFeedCursor(
+  currentUserId: string,
+  limit: number = 20,
+  cursor?: string,
+) {
+  const followingIds = await this.followsService.getFollowingIds(currentUserId);
+
+  if (followingIds.length === 0) {
+    return {
+      data: [],
+      nextCursor: null,
+    };
+  }
+
+  const query: any = {
+    user: { $in: followingIds },
+    processingStatus: VideoProcessingStatus.READY,
+  };
+
+  // Cursor condition
+  if (cursor) {
+    const cursorVideo = await this.videoModel
+      .findById(cursor)
+      .select('createdAt isBoosted boostScore')
+      .lean();
+
+    if (cursorVideo) {
+      query.$or = [
+        { isBoosted: true, boostScore: { $lt: cursorVideo.boostScore } },
+        {
+          boostScore: cursorVideo.boostScore,
+          createdAt: { $lt: cursorVideo.createdAt },
+        },
+      ];
+    }
+  }
+
+  const videos = await this.videoModel
+    .find(query)
+    .populate('user', 'firstName lastName email')
+    .sort({
+      isBoosted: -1,
+      boostScore: -1,
+      createdAt: -1,
+      _id: -1,
+    })
+    .limit(limit + 1) // fetch one extra
+    .lean();
+
+  const hasNext = videos.length > limit;
+  if (hasNext) videos.pop();
+
+  return {
+    data: videos,
+    nextCursor: hasNext ? videos[videos.length - 1]._id : null,
+  };
+}
+
 
   async findAll(
     page: number = 1,
@@ -146,7 +266,7 @@ export class VideoService {
   /**
    * Delete a video
    */
-  async remove(id: string, userId: string): Promise<{message: string}> {
+  async remove(id: string, userId: string): Promise<{ message: string }> {
     const video = await this.videoModel.findById(id).exec();
 
     if (!video) {
@@ -158,7 +278,7 @@ export class VideoService {
     }
 
     await this.videoModel.findByIdAndDelete(id).exec();
-   return {message: 'Video deleted successfully'}
+    return { message: 'Video deleted successfully' }
   }
 
   /**
@@ -221,4 +341,40 @@ export class VideoService {
 
     return result;
   }
+
+  async getProfileVideos(
+  userId: string,
+  page = 1,
+  limit = 12,
+) {
+  const skip = (page - 1) * limit;
+
+  const query = {
+    user: new Types.ObjectId(userId),
+    processingStatus: VideoProcessingStatus.READY,
+  };
+
+  const [videos, total] = await Promise.all([
+    this.videoModel
+      .find(query)
+      .select('thumbnailUrl duration viewCount createdAt')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    this.videoModel.countDocuments(query),
+  ]);
+
+  return {
+    data: videos,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNextPage: page * limit < total,
+    },
+  };
+}
+
 }

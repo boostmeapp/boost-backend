@@ -4,11 +4,12 @@ import mongoosePaginate from 'mongoose-paginate-v2';
 
 @Schema({ timestamps: true, collection: 'follows' })
 export class Follow extends Document {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  follower: Types.ObjectId; // User who is following
+@Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+follower: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  following: Types.ObjectId; // User being followed
+@Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+following: Types.ObjectId;
+
 
   createdAt: Date;
   updatedAt: Date;

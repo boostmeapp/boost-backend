@@ -1,3 +1,4 @@
+import { isValidObjectId } from 'mongoose';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
@@ -30,51 +31,62 @@ export class PaymentService {
   /**
    * Create a payment intent for boosting a video
    */
-  async createBoostPaymentIntent(
-    userId: string,
-    videoId: string,
-    amount: number,
-  ) {
-    if (amount < 1) {
-      throw new BadRequestException('Minimum boost amount is €1');
-    }
+async createBoostPaymentIntent(
+  userId: string,
+  videoId: string,
+  amount: number,
+) {
+  if (!isValidObjectId(videoId)) {
+    throw new BadRequestException('Invalid video ID');
+  }
 
-    if (amount > 100) {
-      throw new BadRequestException('Maximum boost amount is €100');
-    }
+  if (amount < 1) {
+    throw new BadRequestException('Minimum boost amount is €1');
+  }
 
-    const paymentIntent = await this.stripe.paymentIntents.create({
-      amount: Math.round(amount * 100), // Convert to cents
+  if (amount > 100) {
+    throw new BadRequestException('Maximum boost amount is €100');
+  }
+
+  let paymentIntent: Stripe.PaymentIntent;
+
+  try {
+    paymentIntent = await this.stripe.paymentIntents.create({
+      amount: Math.round(amount * 100),
       currency: 'eur',
       metadata: {
         userId,
         videoId,
         type: 'boost_payment',
       },
-      automatic_payment_methods: {
-        enabled: true,
-      },
+      automatic_payment_methods: { enabled: true },
     });
-
-    // Create pending transaction record
-    await this.transactionService.create({
-      userId,
-      type: TransactionType.BOOST_PURCHASE,
-      amount,
-      balanceBefore: 0,
-      balanceAfter: 0,
-      paymentMethod: PaymentMethod.STRIPE,
-      status: TransactionStatus.PENDING,
-      stripePaymentIntentId: paymentIntent.id,
-      videoId,
-      description: `Boost payment of €${amount} for video`,
-    });
-
-    return {
-      clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-    };
+  } catch (error) {
+    console.error('[STRIPE ERROR]', error);
+    throw new BadRequestException('Payment service unavailable');
   }
+
+const wallet = await this.walletService.getWallet(userId);
+
+  await this.transactionService.create({
+    userId,
+    type: TransactionType.BOOST_PURCHASE,
+    amount,
+    balanceBefore: wallet.balance,
+    balanceAfter: wallet.balance,
+    paymentMethod: PaymentMethod.STRIPE,
+    status: TransactionStatus.PENDING,
+    stripePaymentIntentId: paymentIntent.id,
+    videoId,
+    description: `Boost payment of €${amount} for video`,
+  });
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+    paymentIntentId: paymentIntent.id,
+  };
+}
+
 
   /**
    * Confirm a boost payment after client-side confirmation

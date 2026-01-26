@@ -40,4 +40,13 @@ export class CreateUserDto {
   @IsString()
   @MaxLength(20)
   gender?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
+
 }

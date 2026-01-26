@@ -14,6 +14,7 @@ import {
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { Boost, BoostSchema } from '../../database/schemas/boost/boost.schema';
 import { TransactionModule } from '../transaction/transaction.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TransactionModule } from '../transaction/transaction.module';
       { name: Boost.name, schema: BoostSchema },
     ]),
     TransactionModule,
+    WalletModule,
   ],
   controllers: [RewardController],
   providers: [RewardService],
