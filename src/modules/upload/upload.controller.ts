@@ -63,4 +63,35 @@ export class UploadController {
     // 3️⃣ RETURN USER (NO EXTRA API)
     return updatedUser;
   }
+  @Post('video')
+@UseInterceptors(
+  FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+    fileFilter: (_, file, cb) => {
+      if (!file.mimetype.startsWith('video/')) {
+        return cb(
+          new BadRequestException('Only video files allowed'),
+          false,
+        );
+      }
+      cb(null, true);
+    },
+  }),
+)
+async uploadVideo(
+  @CurrentUser() user: User,
+  @UploadedFile() file: Express.Multer.File,
+) {
+  if (!file?.buffer) {
+    throw new BadRequestException('Video file is required');
+  }
+
+  return this.uploadService.uploadFile(
+    user.id,
+    UploadType.VIDEO,
+    file,
+  );
+}
+
 }
