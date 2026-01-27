@@ -5,9 +5,13 @@ export class RegisterDto {
   email: string;
 
   @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @MaxLength(100)
+  @MinLength(8)
   password: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  username?: string;
 
   @IsOptional()
   @IsString()

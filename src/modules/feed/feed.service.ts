@@ -16,84 +16,98 @@ export class FeedService {
    * Boosted videos appear first (sorted by boost score), then regular videos (sorted by creation date)
    * Boosted videos stay boosted until reward pool is depleted (no end date)
    */
-  async getPersonalizedFeed(userId: string, page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
 
-    const videos = await this.videoModel.aggregate([
-      // Stage 1: Match all videos (no processing status filter)
-      // TODO: Add back processingStatus filter when video processing is implemented
-      {
-        $match: {},
-      },
+  private calculateRankScore(video: any): number {
+  const watchScore =
+    video.viewCount > 0
+      ? Math.min(
+          video.watchTimeTotal / (video.viewCount * video.duration),
+          1,
+        )
+      : 0;
 
-      // Stage 2: Add sorting score
-      {
-        $addFields: {
-          // Boosted videos get high score, regular videos get 0
-          // No date check - boost stays active until pool depleted
-          sortScore: {
-            $cond: [
-              { $eq: ['$isBoosted', true] },
-              '$boostScore', // Use boost score for boosted videos
-              0, // Regular videos get 0
-            ],
-          },
-        },
-      },
+  const engagementScore =
+    video.viewCount > 0
+      ? (video.likeCount +
+          video.commentCount * 2 +
+          video.shareCount * 3) /
+        video.viewCount
+      : 0;
 
-      // Stage 3: Sort - boosted videos first (by boost score), then regular videos (by created date)
-      {
-        $sort: {
-          sortScore: -1, // Boosted videos come first
-          createdAt: -1, // Within each group, newest first
-        },
-      },
+  const hoursSinceUpload =
+    (Date.now() - new Date(video.createdAt).getTime()) / 36e5;
 
-      // Stage 4: Populate user data
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'user',
-          foreignField: '_id',
-          as: 'user',
-        },
-      },
-      { $unwind: '$user' },
+  const freshnessScore = Math.exp(-hoursSinceUpload / 48);
 
-      // Stage 5: Remove sensitive data
-      {
-        $project: {
-          'user.password': 0,
-          'user.refreshToken': 0,
-          sortScore: 0,
-        },
-      },
+  const boostScore = video.isBoosted ? video.boostScore / 100 : 0;
 
-      // Stage 6: Pagination
-      { $skip: skip },
-      { $limit: limit },
-    ]);
+  return (
+    watchScore * 0.4 +
+    engagementScore * 0.3 +
+    freshnessScore * 0.2 +
+    boostScore * 0.1
+  );
+}
 
-    // Get total count for pagination
-    const total = await this.videoModel.countDocuments({});
+async getPersonalizedFeed(
+  userId: string,
+  page: number = 1,
+  limit: number = 20,
+) {
+  const skip = (page - 1) * limit;
 
-    // Add hasLiked status for each video
-    const videoIds = videos.map((v) => v._id.toString());
-    const likedMap = await this.likesService.hasUserLikedVideos(userId, videoIds);
+  // 1️⃣ Get candidate videos (READY only)
+  const videos = await this.videoModel
+    .find({ processingStatus: 'ready' })
+    .populate('user', 'firstName lastName profileImage')
+    .lean();
 
-    const videosWithLikeStatus = videos.map((video) => ({
+  // 2️⃣ Rank videos
+  const ranked = videos
+    .map((video: any) => ({
       ...video,
-      hasLiked: likedMap.get(video._id.toString()) || false,
-    }));
+      rankScore: this.calculateRankScore(video),
+    }))
+    .sort((a, b) => b.rankScore - a.rankScore);
 
-    return {
-      docs: videosWithLikeStatus,
-      totalDocs: total,
-      limit,
-      page,
-      totalPages: Math.ceil(total / limit),
-      hasNextPage: page * limit < total,
-      hasPrevPage: page > 1,
-    };
+  // 3️⃣ Mix boosted content (every 5th video)
+  const boosted = ranked.filter((v) => v.isBoosted);
+  const normal = ranked.filter((v) => !v.isBoosted);
+
+  const mixed: any[] = [];
+  let boostIndex = 0;
+
+  for (let i = 0; i < normal.length; i++) {
+    if (i % 5 === 0 && boosted[boostIndex]) {
+      mixed.push(boosted[boostIndex++]);
+    }
+    mixed.push(normal[i]);
   }
+
+  // 4️⃣ Pagination
+  const paginated = mixed.slice(skip, skip + limit);
+
+  // 5️⃣ Like status
+  const videoIds = paginated.map((v) => v._id.toString());
+  const likedMap = await this.likesService.hasUserLikedVideos(
+    userId,
+    videoIds,
+  );
+
+  const finalVideos = paginated.map((video) => ({
+    ...video,
+    hasLiked: likedMap.get(video._id.toString()) || false,
+  }));
+
+  return {
+    docs: finalVideos,
+    totalDocs: mixed.length,
+    limit,
+    page,
+    totalPages: Math.ceil(mixed.length / limit),
+    hasNextPage: page * limit < mixed.length,
+    hasPrevPage: page > 1,
+  };
+}
+
 }

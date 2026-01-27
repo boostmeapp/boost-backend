@@ -30,8 +30,15 @@ export class UsersService {
       throw new ConflictException('User with this email already exists');
     }
 
-    const user = new this.userModel(createUserDto);
-    return user.save();
+  const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+
+const user = new this.userModel({
+  ...createUserDto,
+  password: hashedPassword,
+});
+
+return user.save();
+
   }
 
   async findAll(): Promise<User[]> {
@@ -72,17 +79,26 @@ async getProfile(viewerId: string | null, userId: string) {
     return this.userModel.findOne({ email }).select('+password').exec();
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const user = await this.userModel
-      .findByIdAndUpdate(id, updateUserDto, { new: true })
-      .exec();
+ async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+  const user = await this.userModel
+    .findByIdAndUpdate(
+      id,
+      updateUserDto,
+      {
+        new: true,
+        select:
+          'email firstName lastName username profileImage bio gender followerCount followingCount videoCount role',
+      },
+    )
+    .exec();
 
-    if (!user) {
-      throw new NotFoundException(`User with ID ${id} not found`);
-    }
-
-    return user;
+  if (!user) {
+    throw new NotFoundException(`User with ID ${id} not found`);
   }
+
+  return user;
+}
+
 
   async remove(id: string): Promise<void> {
     const result = await this.userModel.findByIdAndDelete(id).exec();

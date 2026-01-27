@@ -15,7 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { UploadService } from './upload.service';
-import { DirectUploadDto } from './dto';
+import { DirectUploadDto, UploadType } from './dto';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
@@ -70,4 +70,34 @@ export class UploadController {
     await this.uploadService.deleteFile(key);
     return { message: 'File deleted successfully' };
   }
+  @Post('profile-image')
+@UseGuards(JwtAuthGuard)
+async getProfileImageUploadUrl(
+  @CurrentUser() user: User,
+  @Body() body: { fileName: string; fileSize: number },
+) {
+  return this.uploadService.generateProfileImageUploadUrl(
+    user.id,
+    body.fileName,
+    body.fileSize,
+  );
+}
+@Post('profile-image/multipart')
+@UseGuards(JwtAuthGuard)
+@UseInterceptors(FileInterceptor('file'))
+async uploadProfileImage(
+  @CurrentUser() user: User,
+  @UploadedFile() file: Express.Multer.File,
+) {
+  if (!file) {
+    throw new BadRequestException('File is required');
+  }
+
+  return this.uploadService.uploadFile(
+    user.id,
+    UploadType.PROFILE_IMAGE,
+    file,
+  );
+}
+
 }

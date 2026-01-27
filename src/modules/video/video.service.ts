@@ -22,21 +22,18 @@ export class VideoService {
   /**
    * Create a new video record (all videos are public)
    */
-  async create(userId: string, createVideoDto: CreateVideoDto): Promise<Video> {
+  async create(userId: string, dto: CreateVideoDto): Promise<Video> {
     const video = new this.videoModel({
       user: new Types.ObjectId(userId),
-      title: createVideoDto.title,
-      description: createVideoDto.description,
-      caption: createVideoDto.caption,
-      tags: createVideoDto.tags || [],
-      rawVideoKey: createVideoDto.rawVideoKey,
-      thumbnailUrl: createVideoDto.thumbnailUrl,
-      duration: createVideoDto.duration,
-
-      // 🔥 OPTION 1: AUTO READY
+      title: dto.title,
+      description: dto.description,
+      caption: dto.caption,
+      tags: dto.tags?.map(t => t.trim().toLowerCase()) || [],
+      rawVideoKey: dto.rawVideoKey,
+      thumbnailUrl: dto.thumbnailUrl,
+      duration: dto.duration,
       processingStatus: VideoProcessingStatus.READY,
       processingProgress: 100,
-
       viewCount: 0,
       likeCount: 0,
       commentCount: 0,
@@ -46,118 +43,150 @@ export class VideoService {
     return video.save();
   }
 
-async getFollowingFeed(
-  currentUserId: string,
-  page: number = 1,
-  limit: number = 20,
-) {
-  const followingIds = await this.followsService.getFollowingIds(currentUserId);
 
-  if (followingIds.length === 0) {
+
+  async getFollowingFeed(
+    currentUserId: string,
+    page: number = 1,
+    limit: number = 20,
+  ) {
+    const followingIds = await this.followsService.getFollowingIds(currentUserId);
+
+    if (followingIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+          hasNextPage: false,
+        },
+      };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [videos, total] = await Promise.all([
+      this.videoModel
+        .find({
+          user: { $in: followingIds },
+          processingStatus: VideoProcessingStatus.READY,
+        })
+        .populate('user', 'firstName lastName email')
+        .sort({
+          isBoosted: -1,      // 🔥 boosted first
+          boostScore: -1,     // 🔥 higher score first
+          createdAt: -1,      // newest last priority
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      this.videoModel.countDocuments({
+        user: { $in: followingIds },
+        processingStatus: VideoProcessingStatus.READY,
+      }),
+    ]);
+
     return {
-      data: [],
+      data: videos,
       meta: {
-        total: 0,
+        total,
         page,
         limit,
-        totalPages: 0,
-        hasNextPage: false,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
       },
     };
   }
+  async getFollowingFeedCursor(
+    currentUserId: string,
+    limit: number = 20,
+    cursor?: string,
+  ) {
+    const followingIds = await this.followsService.getFollowingIds(currentUserId);
 
-  const skip = (page - 1) * limit;
+    if (followingIds.length === 0) {
+      return {
+        data: [],
+        nextCursor: null,
+      };
+    }
 
-  const [videos, total] = await Promise.all([
-    this.videoModel
-      .find({
-        user: { $in: followingIds },
-        processingStatus: VideoProcessingStatus.READY,
-      })
-      .populate('user', 'firstName lastName email')
-      .sort({
-        isBoosted: -1,      // 🔥 boosted first
-        boostScore: -1,     // 🔥 higher score first
-        createdAt: -1,      // newest last priority
-      })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-
-    this.videoModel.countDocuments({
+    const query: any = {
       user: { $in: followingIds },
       processingStatus: VideoProcessingStatus.READY,
-    }),
-  ]);
-
-  return {
-    data: videos,
-    meta: {
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-      hasNextPage: page * limit < total,
-    },
-  };
-}
-async getFollowingFeedCursor(
-  currentUserId: string,
-  limit: number = 20,
-  cursor?: string,
-) {
-  const followingIds = await this.followsService.getFollowingIds(currentUserId);
-
-  if (followingIds.length === 0) {
-    return {
-      data: [],
-      nextCursor: null,
     };
-  }
 
-  const query: any = {
-    user: { $in: followingIds },
-    processingStatus: VideoProcessingStatus.READY,
-  };
+    // Cursor condition
+    // Cursor condition (STABLE + SAFE)
+    if (cursor) {
+      const cursorVideo = await this.videoModel
+        .findById(cursor)
+        .select('_id createdAt isBoosted boostScore')
+        .lean();
 
-  // Cursor condition
-  if (cursor) {
-    const cursorVideo = await this.videoModel
-      .findById(cursor)
-      .select('createdAt isBoosted boostScore')
+      if (cursorVideo) {
+        query.$or = [
+          // Same boost state, lower score
+          {
+            isBoosted: cursorVideo.isBoosted,
+            boostScore: { $lt: cursorVideo.boostScore },
+          },
+
+          // Same boost + score, older date
+          {
+            isBoosted: cursorVideo.isBoosted,
+            boostScore: cursorVideo.boostScore,
+            createdAt: { $lt: cursorVideo.createdAt },
+          },
+
+          // Same boost + score + date, lower _id
+          {
+            isBoosted: cursorVideo.isBoosted,
+            boostScore: cursorVideo.boostScore,
+            createdAt: cursorVideo.createdAt,
+            _id: { $lt: cursorVideo._id },
+          },
+        ];
+
+      }
+    }
+
+    const videos = await this.videoModel
+      .find(query)
+      .populate('user', 'firstName lastName email')
+      .sort({
+        isBoosted: -1,
+        boostScore: -1,
+        createdAt: -1,
+        _id: -1,
+      })
+      .limit(limit + 1) // fetch one extra
       .lean();
 
-    if (cursorVideo) {
-      query.$or = [
-        { isBoosted: true, boostScore: { $lt: cursorVideo.boostScore } },
-        {
-          boostScore: cursorVideo.boostScore,
-          createdAt: { $lt: cursorVideo.createdAt },
-        },
-      ];
-    }
-  }
-
-  const videos = await this.videoModel
-    .find(query)
-    .populate('user', 'firstName lastName email')
-    .sort({
-      isBoosted: -1,
-      boostScore: -1,
-      createdAt: -1,
-      _id: -1,
-    })
-    .limit(limit + 1) // fetch one extra
-    .lean();
-
   const hasNext = videos.length > limit;
-  if (hasNext) videos.pop();
+if (hasNext) videos.pop();
 
-  return {
-    data: videos,
-    nextCursor: hasNext ? videos[videos.length - 1]._id : null,
-  };
-}
+// ✅ ADD HERE (LIKE STATUS)
+const videoIds = videos.map(v => v._id.toString());
+const likedMap = await this.likesService.hasUserLikedVideos(
+  currentUserId,
+  videoIds,
+);
+
+const enrichedVideos = videos.map(video => ({
+  ...video,
+  hasLiked: likedMap.get(video._id.toString()) || false,
+}));
+
+return {
+  data: enrichedVideos,
+  nextCursor: hasNext ? enrichedVideos[enrichedVideos.length - 1]._id : null,
+};
+
+  }
 
 
   async findAll(
@@ -343,38 +372,38 @@ async getFollowingFeedCursor(
   }
 
   async getProfileVideos(
-  userId: string,
-  page = 1,
-  limit = 12,
-) {
-  const skip = (page - 1) * limit;
+    userId: string,
+    page = 1,
+    limit = 12,
+  ) {
+    const skip = (page - 1) * limit;
 
-  const query = {
-    user: new Types.ObjectId(userId),
-    processingStatus: VideoProcessingStatus.READY,
-  };
+    const query = {
+      user: new Types.ObjectId(userId),
+      processingStatus: VideoProcessingStatus.READY,
+    };
 
-  const [videos, total] = await Promise.all([
-    this.videoModel
-      .find(query)
-      .select('thumbnailUrl duration viewCount createdAt')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    this.videoModel.countDocuments(query),
-  ]);
+    const [videos, total] = await Promise.all([
+      this.videoModel
+        .find(query)
+        .select('thumbnailUrl duration viewCount createdAt')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      this.videoModel.countDocuments(query),
+    ]);
 
-  return {
-    data: videos,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      hasNextPage: page * limit < total,
-    },
-  };
-}
+    return {
+      data: videos,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+      },
+    };
+  }
 
 }

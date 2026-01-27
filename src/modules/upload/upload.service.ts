@@ -93,6 +93,40 @@ export class UploadService {
 
     await this.s3Client.send(command);
   }
+async generateProfileImageUploadUrl(
+  userId: string,
+  fileName: string,
+  fileSize: number,
+): Promise<{
+  uploadUrl: string;
+  fileUrl: string;
+  key: string;
+}> {
+  this.validateFileSize(UploadType.PROFILE_IMAGE, fileSize);
+
+  const key = this.generateS3Key(
+    userId,
+    UploadType.PROFILE_IMAGE,
+    fileName,
+  );
+
+  const command = new PutObjectCommand({
+    Bucket: this.bucketName,
+    Key: key,
+    ContentType: 'image/jpeg',
+    ACL: 'public-read',
+  });
+
+  const uploadUrl = await getSignedUrl(this.s3Client, command, {
+    expiresIn: this.UPLOAD_URL_EXPIRATION,
+  });
+
+  return {
+    uploadUrl,
+    key,
+    fileUrl: this.getPublicUrl(key),
+  };
+}
 
   /**
    * Generate S3 key based on upload type

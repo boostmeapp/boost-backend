@@ -6,6 +6,7 @@ import {
   IsPositive,
   IsArray,
   MaxLength,
+  ArrayMaxSize,
 } from 'class-validator';
 
 export class CreateVideoDto {
@@ -24,10 +25,13 @@ export class CreateVideoDto {
   @MaxLength(500)
   caption?: string;
 
-  @IsArray()
-  @IsString({ each: true })
-  @IsOptional()
-  tags?: string[];
+@IsOptional()
+@IsArray()
+@ArrayMaxSize(10)
+@IsString({ each: true })
+@MaxLength(30, { each: true })
+tags?: string[];
+
 
   @IsString()
   @IsNotEmpty()
@@ -40,4 +44,6 @@ export class CreateVideoDto {
   @IsNumber()
   @IsPositive()
   duration: number; // Duration in seconds
+
+  
 }

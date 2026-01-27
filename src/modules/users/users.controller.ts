@@ -44,6 +44,7 @@ async updateProfileImage(
   return this.usersService.update(user.id, { profileImage });
 }
 
+
   @Get()
   @Roles(UserRole.ADMIN)
   findAll() {
