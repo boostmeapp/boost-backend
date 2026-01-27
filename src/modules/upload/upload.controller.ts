@@ -1,13 +1,7 @@
 import {
   Controller,
   Post,
-  Get,
-  Delete,
-  Body,
-  Param,
   UseGuards,
-  HttpCode,
-  HttpStatus,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
@@ -15,31 +9,30 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { UploadService } from './upload.service';
-import { DirectUploadDto, UploadType } from './dto';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
+import { UploadType } from './dto';
+import { UsersService } from '../users/users.service';
 
 @Controller('upload')
 @UseGuards(JwtAuthGuard)
 export class UploadController {
-  constructor(private readonly uploadService: UploadService) {}
+  constructor(
+    private readonly uploadService: UploadService,
+    private readonly usersService: UsersService, // ✅ ADD
+  ) {}
 
-  @Post()
-  @HttpCode(HttpStatus.OK)
+  // ✅ SINGLE FINAL ENDPOINT
+  @Post('profile-image')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(), // ✅ REQUIRED FOR S3
-      limits: {
-        fileSize: 500 * 1024 * 1024, // 500MB
-      },
+      storage: memoryStorage(), // ✅ REQUIRED
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
       fileFilter: (_, file, cb) => {
-        if (
-          !file.mimetype.startsWith('image/') &&
-          !file.mimetype.startsWith('video/')
-        ) {
+        if (!file.mimetype.startsWith('image/')) {
           return cb(
-            new BadRequestException('Invalid file type'),
+            new BadRequestException('Only image files allowed'),
             false,
           );
         }
@@ -47,57 +40,27 @@ export class UploadController {
       },
     }),
   )
-  async directUpload(
+  async uploadProfileImage(
     @CurrentUser() user: User,
-    @Body() dto: DirectUploadDto,
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file?.buffer) {
-      throw new BadRequestException('File buffer missing');
+      throw new BadRequestException('Image file is required');
     }
 
-    return this.uploadService.uploadFile(user.id, dto.type, file);
-  }
+    // 1️⃣ Upload to S3
+    const { url } = await this.uploadService.uploadFile(
+      user.id,
+      UploadType.PROFILE_IMAGE,
+      file,
+    );
 
-  @Get('signed-url/:key')
-  async getSignedUrl(@Param('key') key: string) {
-    return this.uploadService.generateDownloadUrl(key);
-  }
+    // 2️⃣ SAVE URL DIRECTLY IN USER TABLE ✅
+    const updatedUser = await this.usersService.update(user.id, {
+      profileImage: url,
+    });
 
-  @Delete(':key')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteFile(@Param('key') key: string) {
-    await this.uploadService.deleteFile(key);
-    return { message: 'File deleted successfully' };
+    // 3️⃣ RETURN USER (NO EXTRA API)
+    return updatedUser;
   }
-  @Post('profile-image')
-@UseGuards(JwtAuthGuard)
-async getProfileImageUploadUrl(
-  @CurrentUser() user: User,
-  @Body() body: { fileName: string; fileSize: number },
-) {
-  return this.uploadService.generateProfileImageUploadUrl(
-    user.id,
-    body.fileName,
-    body.fileSize,
-  );
-}
-@Post('profile-image/multipart')
-@UseGuards(JwtAuthGuard)
-@UseInterceptors(FileInterceptor('file'))
-async uploadProfileImage(
-  @CurrentUser() user: User,
-  @UploadedFile() file: Express.Multer.File,
-) {
-  if (!file) {
-    throw new BadRequestException('File is required');
-  }
-
-  return this.uploadService.uploadFile(
-    user.id,
-    UploadType.PROFILE_IMAGE,
-    file,
-  );
-}
-
 }
