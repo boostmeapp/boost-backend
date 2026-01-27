@@ -22,6 +22,14 @@ import { VideoService } from '../video/video.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService,private readonly videoService: VideoService,) {}
+  @Patch('me')
+async updateMe(
+  @CurrentUser() user: User,
+  @Body() updateUserDto: UpdateUserDto,
+) {
+  return this.usersService.update(user.id, updateUserDto);
+}
+
 @Get(':id/profile')
 @Public()
 async getProfile(

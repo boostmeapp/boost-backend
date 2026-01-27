@@ -18,6 +18,9 @@ export class User extends Document {
   @Prop()
   firstName?: string;
 
+  @Prop({ default: null })
+usernameUpdatedAt?: Date;
+
   @Prop()
   lastName?: string;
 
@@ -66,10 +69,12 @@ export class User extends Document {
 
   @Prop()
   bio?: string;
+  @Prop()
+  dob?: Date;
 
   @Prop()
   gender?: string;
-  
+
 
 
   async validatePassword(password: string): Promise<boolean> {
