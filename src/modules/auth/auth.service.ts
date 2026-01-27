@@ -4,6 +4,8 @@ import { TokenService, AuthResponse } from './token.service';
 import { User } from '../../database/schemas/user/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import * as bcrypt from 'bcrypt';
+
 
 @Injectable()
 export class AuthService {
@@ -12,21 +14,22 @@ export class AuthService {
     private tokenService: TokenService,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.usersService.findByEmail(email);
+ 
+async validateUser(email: string, password: string): Promise<User | null> {
+  const user = await this.usersService.findByEmail(email.trim().toLowerCase());
 
-    if (!user || !user.isActive) {
-      return null;
-    }
-
-    const isPasswordValid = await user.validatePassword(password);
-
-    if (!isPasswordValid) {
-      return null;
-    }
-
-    return user;
+  if (!user || !user.isActive) {
+    return null;
   }
+
+  const isMatch = await bcrypt.compare(password, user.password);
+
+  if (!isMatch) {
+    return null;
+  }
+
+  return user;
+}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
     const user = await this.usersService.create(registerDto);
