@@ -71,8 +71,16 @@ async getPersonalizedFeed(
     .sort((a, b) => b.rankScore - a.rankScore);
 
   // 3️⃣ Mix boosted content (every 5th video)
-  const boosted = ranked.filter((v) => v.isBoosted);
-  const normal = ranked.filter((v) => !v.isBoosted);
+ const boostedUserIds = new Set(
+  ranked.filter(v => v.isBoosted).map(v => v.user._id.toString())
+);
+
+const boosted = ranked.filter(v => v.isBoosted);
+
+const normal = ranked.filter(
+  v => !v.isBoosted || boostedUserIds.has(v.user._id.toString())
+);
+
 
   const mixed: any[] = [];
   let boostIndex = 0;
