@@ -23,25 +23,24 @@ export class UsersService {
     private readonly followsService: FollowsService,) { }
   private static readonly USERNAME_CHANGE_DAYS = 60;
 
-  async create(createUserDto: CreateUserDto): Promise<User> {
-    const existingUser = await this.userModel
-      .findOne({ email: createUserDto.email })
-      .exec();
+async create(createUserDto: CreateUserDto): Promise<User> {
+  const existingUser = await this.userModel.findOne({
+    email: createUserDto.email.trim().toLowerCase(),
+  });
 
-    if (existingUser) {
-      throw new ConflictException('User with this email already exists');
-    }
-
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
-
-    const user = new this.userModel({
-      ...createUserDto,
-      password: hashedPassword,
-    });
-
-    return user.save();
-
+  if (existingUser) {
+    throw new ConflictException('User with this email already exists');
   }
+
+  const user = new this.userModel({
+    ...createUserDto,
+    email: createUserDto.email.trim().toLowerCase(),
+  });
+
+  return user.save(); // 🔥 password schema khud hash karega
+}
+
+
 
   async findAll(): Promise<User[]> {
     return this.userModel.find().exec();
@@ -77,9 +76,13 @@ export class UsersService {
     return user;
   }
 
-  async findByEmail(email: string): Promise<User | null> {
-    return this.userModel.findOne({ email }).select('+password').exec();
-  }
+async findByEmail(email: string): Promise<User | null> {
+  return this.userModel
+    .findOne({ email: email.trim().toLowerCase() })
+    .select('+password +isActive')
+    .exec();
+}
+
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
     const user = await this.userModel
