@@ -50,24 +50,28 @@ async getFollowingFeed(
   page: number = 1,
   limit: number = 20,
 ) {
-  const followingIds = await this.followsService.getFollowingIds(currentUserId);
+  const followingIds =
+    await this.followsService.getFollowingIds(currentUserId);
 
-  if (followingIds.length === 0) {
+  // ✅ EMPTY FOLLOWING (IMPORTANT)
+  if (!followingIds || followingIds.length === 0) {
     return {
+      success: true,
       data: [],
-      meta: {
-        total: 0,
-        page,
+      pagination: {
+        totalDocs: 0,
         limit,
+        page,
         totalPages: 0,
         hasNextPage: false,
+        hasPrevPage: false,
       },
     };
   }
 
-  // ✅ FIX (STRING → ObjectId)
+  // ✅ STRING → ObjectId (CRITICAL)
   const followingObjectIds = followingIds.map(
-    id => new Types.ObjectId(id),
+    (id) => new Types.ObjectId(id),
   );
 
   const skip = (page - 1) * limit;
@@ -75,32 +79,35 @@ async getFollowingFeed(
   const [videos, total] = await Promise.all([
     this.videoModel
       .find({
-        user: { $in: followingObjectIds }, // ✅ FIXED
+        user: { $in: followingObjectIds },
         processingStatus: VideoProcessingStatus.READY,
       })
-      .populate('user', 'firstName lastName email')
+      .populate('user', 'firstName lastName email profileImage')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean(),
 
     this.videoModel.countDocuments({
-      user: { $in: followingObjectIds }, // ✅ FIXED
+      user: { $in: followingObjectIds },
       processingStatus: VideoProcessingStatus.READY,
     }),
   ]);
 
   return {
+    success: true, // ✅ REQUIRED BY FRONTEND
     data: videos,
-    meta: {
-      total,
-      page,
+    pagination: {
+      totalDocs: total,
       limit,
+      page,
       totalPages: Math.ceil(total / limit),
       hasNextPage: page * limit < total,
+      hasPrevPage: page > 1,
     },
   };
 }
+
 
 async getFollowingFeedCursor(
   currentUserId: string,
