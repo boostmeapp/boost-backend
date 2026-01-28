@@ -8,7 +8,7 @@ export class SearchService {
   constructor(
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(User.name) private userModel: Model<User>,
-  ) {}
+  ) { }
 
   async searchVideos(query: string, page = 1, limit = 20) {
     return this.videoModel
@@ -42,11 +42,13 @@ export class SearchService {
       .sort({ score: { $meta: 'textScore' } })
       .skip((page - 1) * limit)
       .limit(limit)
-      .select('firstName lastName followerCount')
+      .select('firstName lastName followerCount profileImage username')
       .lean();
   }
 
-  async globalSearch(query: string, page = 1, limit = 10) {
+ async globalSearch(query: string, page = 1, limit = 12) {
+  const skip = (page - 1) * limit;
+
   const [users, videos] = await Promise.all([
     // 👤 USERS
     this.userModel
@@ -59,11 +61,11 @@ export class SearchService {
         { score: { $meta: 'textScore' } },
       )
       .sort({ score: { $meta: 'textScore' }, followerCount: -1 })
-      .limit(5)
-      .select('firstName lastName followerCount')
+      .limit(10)
+      .select('firstName lastName followerCount profileImage username')
       .lean(),
 
-    // 🎥 VIDEOS
+    // 🎥 VIDEOS (caption / tags / title)
     this.videoModel
       .find(
         {
@@ -72,10 +74,26 @@ export class SearchService {
         },
         { score: { $meta: 'textScore' } },
       )
-      .sort({ score: { $meta: 'textScore' }, boostScore: -1 })
-      .skip((page - 1) * limit)
+      .sort({
+        score: { $meta: 'textScore' },
+        boostScore: -1,
+        viewCount: -1,
+      })
+      .skip(skip)
       .limit(limit)
-      .select('title caption tags thumbnailUrl viewCount')
+      .populate('user', 'firstName lastName profileImage username')
+      .select(`
+        title
+        caption
+        tags
+        thumbnailUrl
+        rawVideoKey
+        duration
+        viewCount
+        likeCount
+        commentCount
+        user
+      `)
       .lean(),
   ]);
 
@@ -84,5 +102,6 @@ export class SearchService {
     videos,
   };
 }
+
 
 }

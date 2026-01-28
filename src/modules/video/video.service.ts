@@ -51,8 +51,9 @@ async getFollowingFeed(
   limit: number = 20,
 ) {
   // 1️⃣ Get following user IDs
-  const followingIds = await this.followsService.getFollowingIds(currentUserId);
+ const followingIds = await this.followsService.getFollowingIds(currentUserId);
 
+  console.log('FOLLOWING IDS:', followingIds);
   // 2️⃣ If user follows nobody → return empty but CONSISTENT response
   if (!followingIds || followingIds.length === 0) {
     return {

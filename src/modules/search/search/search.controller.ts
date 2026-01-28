@@ -31,5 +31,12 @@ searchAll(
 
   return this.searchService.globalSearch(q, Number(page));
 }
+@Get('search/global')
+globalSearch(
+  @Query('q') query: string,
+  @Query('page') page = 1,
+) {
+  return this.searchService.globalSearch(query, Number(page));
+}
 
 }
