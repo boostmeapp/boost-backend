@@ -10,13 +10,18 @@ export class FeedController {
   constructor(private readonly feedService: FeedService) {}
 
   // ✅ GLOBAL FEED (NO AUTH)
-  @Get('global')
-  async getGlobalFeed(@Query() query: PaginationDto) {
-    return this.feedService.getGlobalFeed(
-      query.page,
-      query.limit,
-    );
-  }
+@Get('global')
+async getGlobalFeed(
+  @Query() query: PaginationDto,
+  @CurrentUser() user?: User, // OPTIONAL USER
+) {
+  return this.feedService.getGlobalFeed(
+    query.page,
+    query.limit,
+    user?._id?.toString(), // may be undefined
+  );
+}
+
 
   // ✅ FOLLOWING FEED (AUTH REQUIRED)
   @UseGuards(JwtAuthGuard)

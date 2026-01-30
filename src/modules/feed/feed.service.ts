@@ -16,7 +16,6 @@ constructor(
 ) {}
 
 async getFollowingFeed(userId: string, page = 1, limit = 20) {
-
   const skip = (page - 1) * limit;
 
   const userObjectId = new Types.ObjectId(userId);
@@ -44,8 +43,21 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
     .populate('user', 'firstName lastName profileImage')
     .lean();
 
+  // ✅ LIKE STATUS ALWAYS (FOLLOWING FEED IS AUTH)
+  const videoIds = videos.map(v => v._id.toString());
+
+  const likedMap = await this.likesService.hasUserLikedVideos(
+    userId,
+    videoIds,
+  );
+
+  const finalVideos = videos.map(video => ({
+    ...video,
+    hasLiked: likedMap.get(video._id.toString()) || false,
+  }));
+
   return {
-    docs: videos,
+    docs: finalVideos,
     totalDocs,
     limit,
     page,
@@ -55,7 +67,8 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
   };
 }
 
-async getGlobalFeed(page = 1, limit = 20) {
+
+async getGlobalFeed(page = 1, limit = 20, userId?: string) {
   const skip = (page - 1) * limit;
 
   const query = {
@@ -72,8 +85,30 @@ async getGlobalFeed(page = 1, limit = 20) {
     .populate('user', 'firstName lastName profileImage')
     .lean();
 
+  // ✅ ADD LIKE STATUS
+  let finalVideos = videos;
+
+  if (userId) {
+    const videoIds = videos.map(v => v._id.toString());
+
+    const likedMap = await this.likesService.hasUserLikedVideos(
+      userId,
+      videoIds,
+    );
+
+    finalVideos = videos.map(video => ({
+      ...video,
+      hasLiked: likedMap.get(video._id.toString()) || false,
+    }));
+  } else {
+    finalVideos = videos.map(video => ({
+      ...video,
+      hasLiked: false,
+    }));
+  }
+
   return {
-    docs: videos,
+    docs: finalVideos,
     totalDocs,
     limit,
     page,
@@ -82,6 +117,7 @@ async getGlobalFeed(page = 1, limit = 20) {
     hasPrevPage: page > 1,
   };
 }
+
 
   /**
    * TikTok-style feed
