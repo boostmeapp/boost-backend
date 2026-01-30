@@ -3,13 +3,85 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { PaginateModel } from 'mongoose';
 import { Video } from '../../database/schemas/video/video.schema';
 import { LikesService } from '../likes/likes.service';
+import { Follow } from 'src/database/schemas/follow/follow.schema';
+import { Types } from 'mongoose';
+
 
 @Injectable()
 export class FeedService {
-  constructor(
-    @InjectModel(Video.name) private videoModel: PaginateModel<Video>,
-    private likesService: LikesService,
-  ) {}
+constructor(
+  @InjectModel(Video.name) private videoModel: PaginateModel<Video>,
+  @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
+  private likesService: LikesService,
+) {}
+
+async getFollowingFeed(userId: string, page = 1, limit = 20) {
+
+  const skip = (page - 1) * limit;
+
+  const userObjectId = new Types.ObjectId(userId);
+
+  const followingDocs = await this.followModel
+    .find({ follower: userObjectId })
+    .select('following')
+    .lean();
+
+  const followingIds = followingDocs.map(f => f.following);
+  followingIds.push(userObjectId);
+
+  const query = {
+    user: { $in: followingIds },
+    processingStatus: 'ready',
+  };
+
+  const totalDocs = await this.videoModel.countDocuments(query);
+
+  const videos = await this.videoModel
+    .find(query)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .populate('user', 'firstName lastName profileImage')
+    .lean();
+
+  return {
+    docs: videos,
+    totalDocs,
+    limit,
+    page,
+    totalPages: Math.ceil(totalDocs / limit),
+    hasNextPage: page * limit < totalDocs,
+    hasPrevPage: page > 1,
+  };
+}
+
+async getGlobalFeed(page = 1, limit = 20) {
+  const skip = (page - 1) * limit;
+
+  const query = {
+    processingStatus: 'ready',
+  };
+
+  const totalDocs = await this.videoModel.countDocuments(query);
+
+  const videos = await this.videoModel
+    .find(query)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .populate('user', 'firstName lastName profileImage')
+    .lean();
+
+  return {
+    docs: videos,
+    totalDocs,
+    limit,
+    page,
+    totalPages: Math.ceil(totalDocs / limit),
+    hasNextPage: page * limit < totalDocs,
+    hasPrevPage: page > 1,
+  };
+}
 
   /**
    * TikTok-style feed

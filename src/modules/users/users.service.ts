@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User } from '../../database/schemas/user/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -14,13 +14,17 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FollowsService } from '../follows/follows.service';
 import { Video } from '../../database/schemas/video/video.schema';
+import { Follow } from 'src/database/schemas/follow/follow.schema';
 
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>,
-    @InjectModel(Video.name) private videoModel: Model<Video>,
-    private readonly followsService: FollowsService,) { }
+constructor(
+  @InjectModel(User.name) private userModel: Model<User>,
+  @InjectModel(Video.name) private videoModel: Model<Video>,
+  @InjectModel(Follow.name) private followModel: Model<Follow>,
+) {}
+
   private static readonly USERNAME_CHANGE_DAYS = 60;
 
 async create(createUserDto: CreateUserDto): Promise<User> {
@@ -45,28 +49,61 @@ async create(createUserDto: CreateUserDto): Promise<User> {
   async findAll(): Promise<User[]> {
     return this.userModel.find().exec();
   }
-  async getProfile(viewerId: string | null, userId: string) {
-    const user = await this.userModel
-      .findById(userId)
-      .select(
-        'username firstName lastName profileImage bio gender followerCount followingCount videoCount',
-      )
+async getProfile(viewerId: string | null, profileUserId: string) {
 
-      .lean();
+  const profileObjectId = new Types.ObjectId(profileUserId);
+  const viewerObjectId = viewerId ? new Types.ObjectId(viewerId) : null;
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+  // 1️⃣ User Profile Info
+  const user = await this.userModel.findById(profileObjectId)
+    .select("firstName lastName username profileImage followerCount followingCount videoCount")
+    .lean();
 
-    const isFollowing = viewerId
-      ? await this.followsService.isFollowing(viewerId, userId)
-      : false;
+  if (!user) throw new NotFoundException("User not found");
 
-    return {
-      user,
-      isFollowing,
-    };
+  // 2️⃣ Stats (Real Time Counts)
+  const [followers, following, videos] = await Promise.all([
+    this.followModel.countDocuments({ following: profileObjectId }),
+    this.followModel.countDocuments({ follower: profileObjectId }),
+    this.videoModel.countDocuments({
+      user: profileObjectId,
+      processingStatus: "ready"
+    })
+  ]);
+
+  // 3️⃣ Viewer Relationship
+  let isFollowing = false;
+
+  if (viewerObjectId) {
+    const follow = await this.followModel.findOne({
+      follower: viewerObjectId,
+      following: profileObjectId
+    });
+
+    isFollowing = !!follow;
   }
+
+  // 4️⃣ First Page Grid Videos
+  const gridVideos = await this.videoModel.find({
+    user: profileObjectId,
+    processingStatus: "ready"
+  })
+  .sort({ createdAt: -1 })
+  .limit(12)
+  .select("thumbnailUrl duration viewCount likeCount")
+  .lean();
+
+  return {
+    user,
+    stats: {
+      followers,
+      following,
+      videos
+    },
+    isFollowing,
+    gridVideos
+  };
+}
 
   async findOne(id: string): Promise<User> {
     const user = await this.userModel.findById(id).exec();

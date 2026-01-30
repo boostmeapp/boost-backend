@@ -113,10 +113,7 @@ ConfigModule.forRoot({
       useClass: ThrottlerGuard,
     },
     // Auth guard (applies after throttler)
-    {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
+ 
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,

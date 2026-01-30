@@ -13,11 +13,12 @@ import { FollowsService } from '../follows/follows.service';
 
 @Injectable()
 export class VideoService {
-  constructor(
-    @InjectModel(Video.name) private videoModel: Model<Video>,
-    private readonly likesService: LikesService,
-    private readonly followsService: FollowsService,
-  ) { }
+constructor(
+  @InjectModel(Video.name) private videoModel: Model<Video>,
+  private readonly likesService: LikesService,
+  private readonly followsService: FollowsService,
+) {}
+
 
   /**
    * Create a new video record (all videos are public)
@@ -260,25 +261,40 @@ return {
   /**
    * Find a video by ID (all videos are public)
    */
-  async findOne(id: string, userId?: string): Promise<any> {
-    const video = await this.videoModel
-      .findById(id)
-      .populate('user', 'email firstName lastName')
-      .exec();
+ async findOne(id: string, viewerId?: string): Promise<any> {
 
-    if (!video) {
-      throw new NotFoundException('Video not found');
-    }
+  const video = await this.videoModel
+    .findById(id)
+    .populate('user', 'email firstName lastName username profileImage')
+    .lean();
 
-    // Add hasLiked status if user is authenticated
-    const videoObj = video.toObject();
-    if (userId) {
-      const hasLiked = await this.likesService.hasUserLikedVideo(userId, id);
-      return { ...videoObj, hasLiked };
-    }
-
-    return videoObj;
+  if (!video) {
+    throw new NotFoundException('Video not found');
   }
+
+  let hasLiked = false;
+  let isFollowing = false;
+
+  if (viewerId) {
+
+    // Like Status
+    hasLiked = await this.likesService.hasUserLikedVideo(viewerId, id);
+
+    // Follow Status (viewer -> creator)
+    isFollowing = await this.followsService.isFollowing(
+      viewerId,
+      video.user._id.toString(),
+    );
+  }
+
+  return {
+    ...video,
+    hasLiked,
+    isFollowing,
+  };
+}
+
+
 
   /**
    * Update a video

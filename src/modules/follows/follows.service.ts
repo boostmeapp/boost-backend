@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { PaginateModel } from 'mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Follow } from '../../database/schemas/follow/follow.schema';
 import { User } from '../../database/schemas/user/user.schema';
 
@@ -15,72 +15,71 @@ export class FollowsService {
   constructor(
     @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
     @InjectModel(User.name) private userModel: Model<User>,
-  ) {}
+  ) { }
 
   // Follow a user
-  async follow(follower: string, following: string): Promise<Follow> {
-    if (follower === following) {
-      throw new BadRequestException('You cannot follow yourself');
-    }
+async follow(follower: string, following: string): Promise<Follow> {
 
-    // Check if already following
-    const existing = await this.followModel
-      .findOne({ follower, following })
-      .exec();
+  if (follower === following) {
+    throw new BadRequestException('You cannot follow yourself');
+  }
 
-    if (existing) {
-      throw new ConflictException('You are already following this user');
-    }
+  const followerId = new Types.ObjectId(follower);
+  const followingId = new Types.ObjectId(following);
 
-    // Check if user exists
-    const userToFollow = await this.userModel.findById(following).exec();
-    if (!userToFollow) {
-      throw new NotFoundException('User to follow not found');
-    }
+  const userToFollow = await this.userModel.findById(followingId);
+  if (!userToFollow) throw new NotFoundException('User not found');
 
-    // Create follow relationship
-   const followDoc = await this.followModel.findOneAndUpdate(
-  { follower, following },
-  { follower, following },
-  { upsert: true, new: true },
-);
+  try {
+    const followDoc = await this.followModel.create({
+      follower: followerId,
+      following: followingId,
+    });
 
-
-    // Update follower/following counts
     await Promise.all([
-      this.userModel.findByIdAndUpdate(follower, {
-        $inc: { followingCount: 1 },
-      }),
-      this.userModel.findByIdAndUpdate(following, {
-        $inc: { followerCount: 1 },
-      }),
+      this.userModel.updateOne(
+        { _id: followerId },
+        { $inc: { followingCount: 1 } }
+      ),
+      this.userModel.updateOne(
+        { _id: followingId },
+        { $inc: { followerCount: 1 } }
+      ),
     ]);
 
     return followDoc;
+
+  } catch (e) {
+    throw new ConflictException('Already following');
   }
+}
+
 
   // Unfollow a user
- async unfollow(follower: string, following: string): Promise<void> {
-  const result = await this.followModel
-    .findOneAndDelete({ follower, following })
-    .exec();
+  async unfollow(follower: string, following: string): Promise<void> {
+    const result = await this.followModel
+.findOneAndDelete({
+  follower: new Types.ObjectId(follower),
+  following: new Types.ObjectId(following)
+})
+      .exec();
 
-  if (!result) {
-    throw new NotFoundException('You are not following this user');
+    if (!result) {
+      throw new NotFoundException('You are not following this user');
+    }
+
+    // ✅ SAFE decrement (negative count se bachaata hai)
+    await Promise.all([
+      this.userModel.updateOne(
+        { _id: follower, followingCount: { $gt: 0 } },
+        { $inc: { followingCount: -1 } },
+      ),
+      this.userModel.updateOne(
+        { _id: following, followerCount: { $gt: 0 } },
+        { $inc: { followerCount: -1 } },
+      ),
+    ]);
   }
-
-  // ✅ SAFE decrement (negative count se bachaata hai)
-  await Promise.all([
-    this.userModel.updateOne(
-      { _id: follower, followingCount: { $gt: 0 } },
-      { $inc: { followingCount: -1 } },
-    ),
-    this.userModel.updateOne(
-      { _id: following, followerCount: { $gt: 0 } },
-      { $inc: { followerCount: -1 } },
-    ),
-  ]);
-}
 
 
   // Get list of followers with pagination
