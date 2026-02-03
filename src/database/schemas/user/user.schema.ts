@@ -19,7 +19,7 @@ export class User extends Document {
   firstName?: string;
 
   @Prop({ default: null })
-usernameUpdatedAt?: Date;
+  usernameUpdatedAt?: Date;
 
   @Prop()
   lastName?: string;
@@ -127,6 +127,8 @@ UserSchema.index(
     firstName: 'text',
     lastName: 'text',
     email: 'text',
+    username: 'text',
+
   },
   {
     weights: {

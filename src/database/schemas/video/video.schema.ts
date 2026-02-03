@@ -151,14 +151,9 @@ VideoSchema.index(
   {
     title: 'text',
     caption: 'text',
+    description: 'text',
     tags: 'text',
   },
-  {
-    weights: {
-      title: 5,
-      caption: 3,
-      tags: 1,
-    },
-    name: 'VideoTextSearch',
-  },
+  { name: 'VideoTextSearch' },
 );
+
