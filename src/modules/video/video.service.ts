@@ -13,11 +13,11 @@ import { FollowsService } from '../follows/follows.service';
 
 @Injectable()
 export class VideoService {
-constructor(
-  @InjectModel(Video.name) private videoModel: Model<Video>,
-  private readonly likesService: LikesService,
-  private readonly followsService: FollowsService,
-) {}
+  constructor(
+    @InjectModel(Video.name) private videoModel: Model<Video>,
+    private readonly likesService: LikesService,
+    private readonly followsService: FollowsService,
+  ) { }
 
 
   /**
@@ -46,66 +46,66 @@ constructor(
 
 
 
-async getFollowingFeed(
-  currentUserId: string,
-  page: number = 1,
-  limit: number = 20,
-) {
-  // 1️⃣ Get following user IDs
- const followingIds = await this.followsService.getFollowingIds(currentUserId);
+  async getFollowingFeed(
+    currentUserId: string,
+    page: number = 1,
+    limit: number = 20,
+  ) {
+    // 1️⃣ Get following user IDs
+    const followingIds = await this.followsService.getFollowingIds(currentUserId);
 
-  console.log('FOLLOWING IDS:', followingIds);
-  // 2️⃣ If user follows nobody → return empty but CONSISTENT response
-  if (!followingIds || followingIds.length === 0) {
+    console.log('FOLLOWING IDS:', followingIds);
+    // 2️⃣ If user follows nobody → return empty but CONSISTENT response
+    if (!followingIds || followingIds.length === 0) {
+      return {
+        data: [],
+        pagination: {
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+          hasNextPage: false,
+        },
+      };
+    }
+
+    const skip = (page - 1) * limit;
+
+    // 3️⃣ Fetch videos + count
+    const [videos, total] = await Promise.all([
+      this.videoModel
+        .find({
+          user: { $in: followingIds },
+          processingStatus: VideoProcessingStatus.READY,
+        })
+        .populate('user', 'firstName lastName email')
+        .sort({
+          isBoosted: -1,
+          boostScore: -1,
+          createdAt: -1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      this.videoModel.countDocuments({
+        user: { $in: followingIds },
+        processingStatus: VideoProcessingStatus.READY,
+      }),
+    ]);
+
+    // 4️⃣ Return FINAL response (frontend compatible)
     return {
-      data: [],
+      data: videos,
       pagination: {
-        total: 0,
+        total,
         page,
         limit,
-        totalPages: 0,
-        hasNextPage: false,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
       },
     };
   }
-
-  const skip = (page - 1) * limit;
-
-  // 3️⃣ Fetch videos + count
-  const [videos, total] = await Promise.all([
-    this.videoModel
-      .find({
-        user: { $in: followingIds },
-        processingStatus: VideoProcessingStatus.READY,
-      })
-      .populate('user', 'firstName lastName email')
-      .sort({
-        isBoosted: -1,
-        boostScore: -1,
-        createdAt: -1,
-      })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-
-    this.videoModel.countDocuments({
-      user: { $in: followingIds },
-      processingStatus: VideoProcessingStatus.READY,
-    }),
-  ]);
-
-  // 4️⃣ Return FINAL response (frontend compatible)
-  return {
-    data: videos,
-    pagination: {
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-      hasNextPage: page * limit < total,
-    },
-  };
-}
 
   async getFollowingFeedCursor(
     currentUserId: string,
@@ -173,25 +173,25 @@ async getFollowingFeed(
       .limit(limit + 1) // fetch one extra
       .lean();
 
-  const hasNext = videos.length > limit;
-if (hasNext) videos.pop();
+    const hasNext = videos.length > limit;
+    if (hasNext) videos.pop();
 
-// ✅ ADD HERE (LIKE STATUS)
-const videoIds = videos.map(v => v._id.toString());
-const likedMap = await this.likesService.hasUserLikedVideos(
-  currentUserId,
-  videoIds,
-);
+    // ✅ ADD HERE (LIKE STATUS)
+    const videoIds = videos.map(v => v._id.toString());
+    const likedMap = await this.likesService.hasUserLikedVideos(
+      currentUserId,
+      videoIds,
+    );
 
-const enrichedVideos = videos.map(video => ({
-  ...video,
-  hasLiked: likedMap.get(video._id.toString()) || false,
-}));
+    const enrichedVideos = videos.map(video => ({
+      ...video,
+      hasLiked: likedMap.get(video._id.toString()) || false,
+    }));
 
-return {
-  data: enrichedVideos,
-  nextCursor: hasNext ? enrichedVideos[enrichedVideos.length - 1]._id : null,
-};
+    return {
+      data: enrichedVideos,
+      nextCursor: hasNext ? enrichedVideos[enrichedVideos.length - 1]._id : null,
+    };
 
   }
 
@@ -226,7 +226,11 @@ return {
       this.videoModel
         .find(query)
         .populate('user', 'email firstName lastName')
-        .sort({ createdAt: -1 })
+        .sort({
+          isBoosted: -1,
+          boostScore: -1,
+          createdAt: -1,
+        })
         .skip(skip)
         .limit(limit)
         .exec(),
@@ -261,38 +265,38 @@ return {
   /**
    * Find a video by ID (all videos are public)
    */
- async findOne(id: string, viewerId?: string): Promise<any> {
+  async findOne(id: string, viewerId?: string): Promise<any> {
 
-  const video = await this.videoModel
-    .findById(id)
-    .populate('user', 'email firstName lastName username profileImage')
-    .lean();
+    const video = await this.videoModel
+      .findById(id)
+      .populate('user', 'email firstName lastName username profileImage')
+      .lean();
 
-  if (!video) {
-    throw new NotFoundException('Video not found');
+    if (!video) {
+      throw new NotFoundException('Video not found');
+    }
+
+    let hasLiked = false;
+    let isFollowing = false;
+
+    if (viewerId) {
+
+      // Like Status
+      hasLiked = await this.likesService.hasUserLikedVideo(viewerId, id);
+
+      // Follow Status (viewer -> creator)
+      isFollowing = await this.followsService.isFollowing(
+        viewerId,
+        video.user._id.toString(),
+      );
+    }
+
+    return {
+      ...video,
+      hasLiked,
+      isFollowing,
+    };
   }
-
-  let hasLiked = false;
-  let isFollowing = false;
-
-  if (viewerId) {
-
-    // Like Status
-    hasLiked = await this.likesService.hasUserLikedVideo(viewerId, id);
-
-    // Follow Status (viewer -> creator)
-    isFollowing = await this.followsService.isFollowing(
-      viewerId,
-      video.user._id.toString(),
-    );
-  }
-
-  return {
-    ...video,
-    hasLiked,
-    isFollowing,
-  };
-}
 
 
 
@@ -409,7 +413,11 @@ return {
       this.videoModel
         .find(query)
         .select('thumbnailUrl duration viewCount createdAt')
-        .sort({ createdAt: -1 })
+        .sort({
+          isBoosted: -1,
+          boostScore: -1,
+          createdAt: -1,
+        })
         .skip(skip)
         .limit(limit)
         .lean(),
