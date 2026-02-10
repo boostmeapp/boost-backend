@@ -35,44 +35,43 @@ export class RewardService {
       private walletService: WalletService, 
   ) {}
 
-  async createVideoReward(boostId: string, videoId: string): Promise<VideoReward> {
-    const boost = await this.boostModel.findById(boostId).exec();
-    if (!boost) {
-      throw new NotFoundException('Boost not found');
-    }
-
-    const video = await this.videoModel.findById(videoId).exec();
-    if (!video) {
-      throw new NotFoundException('Video not found');
-    }
-
-    // Calculate reward pool (20% of boost amount, 80% is platform revenue)
-    const totalRewardPool = boost.amount * REWARD_CONFIG.REWARD_POOL_PERCENTAGE;
-
-    // Fixed reward per view is €0.0003
-    const rewardPerView = this.FIXED_REWARD_PER_VIEW;
-
-    // Calculate max rewarded views based on pool
-    const maxRewardedViews = Math.floor(totalRewardPool / rewardPerView);
-
-    const videoReward = new this.videoRewardModel({
-      video: new Types.ObjectId(videoId),
-      boost: new Types.ObjectId(boostId),
-      totalRewardPool,
-      distributedRewards: 0,
-      remainingRewards: totalRewardPool,
-      rewardPerView,
-      totalViews: 0,
-      eligibleViews: 0,
-      isActive: true,
-      endDate: undefined, // No end date - runs until pool depleted
-    });
-
-    // Update global stats
-    await this.updateGlobalStats(totalRewardPool, 0);
-
-    return videoReward.save();
+async createVideoReward(boostId: string, videoId: string): Promise<VideoReward> {
+  const boost = await this.boostModel.findById(boostId).exec();
+  if (!boost) {
+    throw new NotFoundException('Boost not found');
   }
+
+  const video = await this.videoModel.findById(videoId).exec();
+  if (!video) {
+    throw new NotFoundException('Video not found');
+  }
+
+  // ❗ OPTIONAL safety (agar chaho)
+  if (!video.isBoosted) {
+    throw new BadRequestException(
+      'Reward only for boosted video',
+    );
+  }
+
+  const totalRewardPool =
+    boost.amount * REWARD_CONFIG.REWARD_POOL_PERCENTAGE;
+
+  const videoReward = new this.videoRewardModel({
+    video: new Types.ObjectId(videoId),
+    boost: new Types.ObjectId(boostId),
+    totalRewardPool,
+    distributedRewards: 0,
+    remainingRewards: totalRewardPool,
+    rewardPerView: this.FIXED_REWARD_PER_VIEW,
+    totalViews: 0,
+    eligibleViews: 0,
+    isActive: true,
+  });
+
+  await this.updateGlobalStats(totalRewardPool, 0);
+  return videoReward.save();
+}
+
 
   async recordVideoWatch(
     userId: string,
@@ -200,11 +199,10 @@ export class RewardService {
 
     // Update user reward balance
 // Update reward balance (analytics / stats)
+
 const updatedBalance = await this.updateUserRewardBalance(userId, earnedAmount);
 await this.walletService.addEarnings(userId, earnedAmount);
 
-// ✅ ALSO update withdrawable wallet
-await this.walletService.addEarnings(userId, earnedAmount);
 
     // Update global stats
     await this.updateGlobalStats(0, earnedAmount);
