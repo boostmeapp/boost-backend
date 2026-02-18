@@ -17,7 +17,6 @@ constructor(
 
 async getFollowingFeed(userId: string, page = 1, limit = 20) {
   const skip = (page - 1) * limit;
-
   const userObjectId = new Types.ObjectId(userId);
 
   const followingDocs = await this.followModel
@@ -26,7 +25,19 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
     .lean();
 
   const followingIds = followingDocs.map(f => f.following);
-  followingIds.push(userObjectId);
+
+  // ✅ If user follows nobody, return empty feed
+  if (!followingIds.length) {
+    return {
+      docs: [],
+      totalDocs: 0,
+      limit,
+      page,
+      totalPages: 0,
+      hasNextPage: false,
+      hasPrevPage: false,
+    };
+  }
 
   const query = {
     user: { $in: followingIds },
@@ -43,7 +54,6 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
     .populate('user', 'firstName lastName profileImage')
     .lean();
 
-  // ✅ LIKE STATUS ALWAYS (FOLLOWING FEED IS AUTH)
   const videoIds = videos.map(v => v._id.toString());
 
   const likedMap = await this.likesService.hasUserLikedVideos(
@@ -66,6 +76,7 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
     hasPrevPage: page > 1,
   };
 }
+
 
 
 async getGlobalFeed(page = 1, limit = 20, userId?: string) {
