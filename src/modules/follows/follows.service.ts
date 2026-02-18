@@ -18,50 +18,50 @@ export class FollowsService {
   ) { }
 
   // Follow a user
-async follow(follower: string, following: string): Promise<Follow> {
+  async follow(follower: string, following: string): Promise<Follow> {
 
-  if (follower === following) {
-    throw new BadRequestException('You cannot follow yourself');
+    if (follower === following) {
+      throw new BadRequestException('You cannot follow yourself');
+    }
+
+    const followerId = new Types.ObjectId(follower);
+    const followingId = new Types.ObjectId(following);
+
+    const userToFollow = await this.userModel.findById(followingId);
+    if (!userToFollow) throw new NotFoundException('User not found');
+
+    try {
+      const followDoc = await this.followModel.create({
+        follower: followerId,
+        following: followingId,
+      });
+
+      await Promise.all([
+        this.userModel.updateOne(
+          { _id: followerId },
+          { $inc: { followingCount: 1 } }
+        ),
+        this.userModel.updateOne(
+          { _id: followingId },
+          { $inc: { followerCount: 1 } }
+        ),
+      ]);
+
+      return followDoc;
+
+    } catch (e) {
+      throw new ConflictException('Already following');
+    }
   }
-
-  const followerId = new Types.ObjectId(follower);
-  const followingId = new Types.ObjectId(following);
-
-  const userToFollow = await this.userModel.findById(followingId);
-  if (!userToFollow) throw new NotFoundException('User not found');
-
-  try {
-    const followDoc = await this.followModel.create({
-      follower: followerId,
-      following: followingId,
-    });
-
-    await Promise.all([
-      this.userModel.updateOne(
-        { _id: followerId },
-        { $inc: { followingCount: 1 } }
-      ),
-      this.userModel.updateOne(
-        { _id: followingId },
-        { $inc: { followerCount: 1 } }
-      ),
-    ]);
-
-    return followDoc;
-
-  } catch (e) {
-    throw new ConflictException('Already following');
-  }
-}
 
 
   // Unfollow a user
   async unfollow(follower: string, following: string): Promise<void> {
     const result = await this.followModel
-.findOneAndDelete({
-  follower: new Types.ObjectId(follower),
-  following: new Types.ObjectId(following)
-})
+      .findOneAndDelete({
+        follower: new Types.ObjectId(follower),
+        following: new Types.ObjectId(following)
+      })
       .exec();
 
     if (!result) {
@@ -85,15 +85,16 @@ async follow(follower: string, following: string): Promise<Follow> {
   // Get list of followers with pagination
   async getFollowers(userId: string, page: number = 1, limit: number = 20) {
     return await this.followModel.paginate(
-      { following: userId },
+      { following: new Types.ObjectId(userId) },
       {
         page,
         limit,
         sort: { createdAt: -1 },
         populate: {
           path: 'follower',
-          select: 'email firstName lastName followerCount followingCount',
+          select: 'email firstName lastName profileImage followerCount followingCount',
         },
+
       },
     );
   }
@@ -108,8 +109,9 @@ async follow(follower: string, following: string): Promise<Follow> {
         sort: { createdAt: -1 },
         populate: {
           path: 'following',
-          select: 'email firstName lastName followerCount followingCount',
+          select: 'email firstName lastName profileImage followerCount followingCount',
         },
+
       },
     );
   }
@@ -117,7 +119,10 @@ async follow(follower: string, following: string): Promise<Follow> {
   // Check if user A is following user B
   async isFollowing(follower: string, following: string): Promise<boolean> {
     const follow = await this.followModel
-      .exists({ follower, following })
+      .exists({
+        follower: new Types.ObjectId(follower),
+        following: new Types.ObjectId(following),
+      })
       .exec();
     return !!follow;
   }

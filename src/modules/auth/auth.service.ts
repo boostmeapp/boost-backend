@@ -5,13 +5,18 @@ import { User } from '../../database/schemas/user/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { Follow } from 'src/database/schemas/follow/follow.schema';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly tokenService: TokenService,
-  ) {}
+    @InjectModel(Follow.name)
+    private readonly followModel: Model<Follow>,
+  ) { }
 
   // ✅ LOGIN VALIDATION (PRODUCTION SAFE)
   async validateUser(email: string, password: string): Promise<User | null> {
@@ -44,7 +49,14 @@ export class AuthService {
 
     const tokens = await this.tokenService.generateTokens(user);
 
-    return { user, ...tokens };
+    return {
+      user: {
+        ...user.toObject(),
+        followerCount: 0,
+        followingCount: 0,
+      },
+      ...tokens,
+    };
   }
 
   async login(loginDto: LoginDto): Promise<AuthResponse> {
@@ -57,10 +69,26 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    const userId = new Types.ObjectId(user._id);
+
+    // ✅ REAL COUNTS
+    const [followers, following] = await Promise.all([
+      this.followModel.countDocuments({ following: userId }),
+      this.followModel.countDocuments({ follower: userId }),
+    ]);
+
     const tokens = await this.tokenService.generateTokens(user);
 
-    return { user, ...tokens };
+    return {
+      user: {
+        ...user.toObject(),
+        followerCount: followers,
+        followingCount: following,
+      },
+      ...tokens,
+    };
   }
+
 
   async refreshTokens(refreshToken: string): Promise<AuthResponse> {
     try {

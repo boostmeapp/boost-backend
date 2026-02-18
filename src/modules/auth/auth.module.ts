@@ -11,12 +11,19 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
 import { ENV } from '../../config';
+import { Follow, FollowSchema } from '../../database/schemas/follow/follow.schema';
 
 @Module({
   imports: [
     UsersModule,
     PassportModule,
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
+      { name: Follow.name, schema: FollowSchema }, 
+    ]),
+
+
+
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
@@ -35,4 +42,4 @@ import { ENV } from '../../config';
   providers: [AuthService, TokenService, LocalStrategy, JwtStrategy],
   exports: [AuthService, TokenService],
 })
-export class AuthModule {}
+export class AuthModule { }
