@@ -19,17 +19,17 @@ export class FollowsController {
   constructor(private readonly followsService: FollowsService) {}
 
   // Follow a user
-  @Post(':userId')
-  async follow(@CurrentUser() user: User, @Param('userId') userId: string) {
-    return this.followsService.follow(user.id, userId);
-  }
+ @Post(':userId')
+async follow(@CurrentUser() user: User, @Param('userId') userId: string) {
+  return this.followsService.follow(user._id.toString(), userId);
+}
 
-  // Unfollow a user
-  @Delete(':userId')
-  async unfollow(@CurrentUser() user: User, @Param('userId') userId: string) {
-    await this.followsService.unfollow(user.id, userId);
-    return { message: 'Successfully unfollowed user' };
-  }
+@Delete(':userId')
+async unfollow(@CurrentUser() user: User, @Param('userId') userId: string) {
+  await this.followsService.unfollow(user._id.toString(), userId);
+  return { message: 'Successfully unfollowed user' };
+}
+
 
   // Get followers of any user (including logged-in user)
   @Get(':userId/followers')

@@ -4,12 +4,11 @@ import mongoosePaginate from 'mongoose-paginate-v2';
 
 @Schema({ timestamps: true, collection: 'follows' })
 export class Follow extends Document {
-@Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-follower: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  follower: Types.ObjectId;
 
-@Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-following: Types.ObjectId;
-
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  following: Types.ObjectId;
 
   createdAt: Date;
   updatedAt: Date;
@@ -17,14 +16,15 @@ following: Types.ObjectId;
 
 export const FollowSchema = SchemaFactory.createForClass(Follow);
 
-// Add pagination plugin
 FollowSchema.plugin(mongoosePaginate as any);
 
-// Compound index for uniqueness and fast lookups
-FollowSchema.index({ follower: 1, following: 1 }, { unique: true });
+// Prevent duplicate follow
+FollowSchema.index(
+  { follower: 1, following: 1 },
+  { unique: true, background: true }
+);
 
-// Index for getting followers of a user
+// Optimized queries
 FollowSchema.index({ following: 1, createdAt: -1 });
-
-// Index for getting who a user is following
 FollowSchema.index({ follower: 1, createdAt: -1 });
+
