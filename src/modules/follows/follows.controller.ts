@@ -48,6 +48,13 @@ async unfollow(@CurrentUser() user: User, @Param('userId') userId: string) {
   ) {
     return this.followsService.getFollowing(userId, query.page, query.limit);
   }
+@Delete(':userId/remove')
+removeFollower(
+  @CurrentUser() user: User,
+  @Param('userId') userId: string,
+) {
+  return this.followsService.unfollow(userId, user._id.toString());
+}
 
   // Check if logged-in user is following another user
   @Get(':userId/is-following')
