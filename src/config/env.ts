@@ -125,4 +125,42 @@ export class ENV {
       .get<string>('VIDEO_QUALITIES', '360p,720p,1080p')
       .split(',');
   }
+
+  // SMTP / Mail
+  static get SMTP_HOST(): string {
+    return configService.get<string>('SMTP_HOST', '');
+  }
+
+  static get SMTP_PORT(): number {
+    return Number(configService.get<string>('SMTP_PORT', '587'));
+  }
+
+  static get SMTP_SECURE(): boolean {
+    return configService.get<string>('SMTP_SECURE', 'false') === 'true';
+  }
+
+  static get SMTP_USER(): string {
+    return configService.get<string>('SMTP_USER', '');
+  }
+
+  static get SMTP_PASSWORD(): string {
+    return configService.get<string>('SMTP_PASSWORD', '');
+  }
+
+  static get MAIL_FROM(): string {
+    return configService.get<string>('MAIL_FROM', 'BoostMe <no-reply@boostme.app>');
+  }
+
+  static get APP_NAME(): string {
+    return configService.get<string>('APP_NAME', 'BoostMe');
+  }
+
+  static get FRONTEND_URL(): string {
+    return configService.get<string>('FRONTEND_URL', 'https://boostme.app');
+  }
+
+  // Deep-link scheme for mobile reset password (expo-router)
+  static get APP_DEEP_LINK_SCHEME(): string {
+    return configService.get<string>('APP_DEEP_LINK_SCHEME', 'boostme');
+  }
 }

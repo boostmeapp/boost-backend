@@ -5,11 +5,17 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { ResetLinkController } from './reset-link.controller';
 import { TokenService } from './token.service';
+import { VerificationService } from './verification.service';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
+import {
+  VerificationToken,
+  VerificationTokenSchema,
+} from '../../database/schemas/verification/verification-token.schema';
 import { ENV } from '../../config';
 import { Follow, FollowSchema } from '../../database/schemas/follow/follow.schema';
 
@@ -19,11 +25,9 @@ import { Follow, FollowSchema } from '../../database/schemas/follow/follow.schem
     PassportModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
-      { name: Follow.name, schema: FollowSchema }, 
+      { name: Follow.name, schema: FollowSchema },
+      { name: VerificationToken.name, schema: VerificationTokenSchema },
     ]),
-
-
-
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
@@ -38,8 +42,14 @@ import { Follow, FollowSchema } from '../../database/schemas/follow/follow.schem
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, TokenService, LocalStrategy, JwtStrategy],
-  exports: [AuthService, TokenService],
+  controllers: [AuthController, ResetLinkController],
+  providers: [
+    AuthService,
+    TokenService,
+    VerificationService,
+    LocalStrategy,
+    JwtStrategy,
+  ],
+  exports: [AuthService, TokenService, VerificationService],
 })
-export class AuthModule { }
+export class AuthModule {}

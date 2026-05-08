@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { TokenService, AuthResponse } from './token.service';
 import { User } from '../../database/schemas/user/user.schema';
@@ -8,14 +8,18 @@ import * as bcrypt from 'bcrypt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
+import { VerificationService } from './verification.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly tokenService: TokenService,
     @InjectModel(Follow.name)
     private readonly followModel: Model<Follow>,
+    private readonly verificationService: VerificationService,
   ) { }
 
   // ✅ LOGIN VALIDATION (PRODUCTION SAFE)
@@ -48,6 +52,16 @@ export class AuthService {
     });
 
     const tokens = await this.tokenService.generateTokens(user);
+
+    // Fire-and-forget: send verification OTP, but don't fail signup if SMTP is down.
+    this.verificationService
+      .sendEmailVerificationOtp(user.email)
+      .catch((err) =>
+        this.logger.error(
+          `Failed to send signup verification email to ${user.email}`,
+          err as Error,
+        ),
+      );
 
     return {
       user: {

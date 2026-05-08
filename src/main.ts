@@ -71,7 +71,9 @@ async function bootstrap() {
   app.use(require('express').json({ limit: '10mb' }));
   app.use(require('express').urlencoded({ limit: '10mb', extended: true }));
 
-  app.setGlobalPrefix(ENV.API_PREFIX);
+  app.setGlobalPrefix(ENV.API_PREFIX, {
+    exclude: ['reset-password'],
+  });
 
   // Global validation pipe with production settings
   app.useGlobalPipes(

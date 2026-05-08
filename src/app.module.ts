@@ -27,6 +27,7 @@ import { AllExceptionsFilter } from './common/filters';
 import { ENV } from './config';
 import { CommentsModule } from './modules/comments/comments.module';
 import { SearchModule } from './modules/search/search/search.module';
+import { MailerModule } from './modules/mailer/mailer.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ ConfigModule.forRoot({
       inject: [ConfigService],
     }),
     DatabaseModule,
+    MailerModule,
     AuthModule,
     UsersModule,
     FollowsModule,

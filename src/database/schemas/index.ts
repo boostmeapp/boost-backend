@@ -4,3 +4,4 @@ export * from './video/video.schema';
 export * from './tag/tag.schema';
 export * from './boost/boost.schema';
 export * from './payout';
+export * from './verification/verification-token.schema';

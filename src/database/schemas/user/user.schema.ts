@@ -31,6 +31,12 @@ export class User extends Document {
   isActive: boolean;
 
   @Prop({ default: false })
+  isEmailVerified: boolean;
+
+  @Prop()
+  emailVerifiedAt?: Date;
+
+  @Prop({ default: false })
   isBanned: boolean;
 
   @Prop()
