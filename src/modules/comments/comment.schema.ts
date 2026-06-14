@@ -20,9 +20,23 @@ export class Comment extends Document {
   @Prop({ default: 0 })
   likeCount: number;
 
-  // Soft delete
+  // Soft delete (by author / video owner)
   @Prop({ default: false, index: true })
   isDeleted: boolean;
+
+  // Moderation
+  @Prop({ default: 0 })
+  reportCount: number;
+
+  // true when removed by admin moderation
+  @Prop({ default: false, index: true })
+  isRemoved: boolean;
+
+  @Prop()
+  removedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  removedBy?: Types.ObjectId;
 }
 
 export const CommentSchema = SchemaFactory.createForClass(Comment);

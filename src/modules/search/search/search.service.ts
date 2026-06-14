@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Video, User } from 'src/database/schemas';
+import { Video, User, ModerationStatus } from 'src/database/schemas';
 
 @Injectable()
 export class SearchService {
@@ -16,6 +16,7 @@ export class SearchService {
         {
           $text: { $search: query },
           processingStatus: 'ready',
+          moderationStatus: { $ne: ModerationStatus.REMOVED },
         },
         {
           score: { $meta: 'textScore' },
@@ -71,6 +72,7 @@ export class SearchService {
         {
           $text: { $search: query },
           processingStatus: 'ready',
+          moderationStatus: { $ne: ModerationStatus.REMOVED },
         },
         { score: { $meta: 'textScore' } },
       )

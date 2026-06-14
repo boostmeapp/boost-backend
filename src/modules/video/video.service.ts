@@ -2,13 +2,15 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Video, VideoProcessingStatus } from '../../database/schemas/video/video.schema';
+import { Video, VideoProcessingStatus, ModerationStatus } from '../../database/schemas/video/video.schema';
 import { CreateVideoDto, UpdateVideoDto } from './dto';
 import { LikesService } from '../likes/likes.service';
 import { FollowsService } from '../follows/follows.service';
+import { scanText } from '../../common/utils/content-filter.util';
 
 
 @Injectable()
@@ -24,6 +26,19 @@ export class VideoService {
    * Create a new video record (all videos are public)
    */
   async create(userId: string, dto: CreateVideoDto): Promise<Video> {
+    // Content filter: reject objectionable text in title/caption/description/tags
+    const scan = scanText(
+      dto.title,
+      dto.caption,
+      dto.description,
+      ...(dto.tags || []),
+    );
+    if (!scan.clean) {
+      throw new BadRequestException(
+        'Your post contains language that violates our Community Guidelines and cannot be published.',
+      );
+    }
+
     const video = new this.videoModel({
       user: new Types.ObjectId(userId),
       title: dto.title,
@@ -77,6 +92,7 @@ export class VideoService {
         .find({
           user: { $in: followingIds },
           processingStatus: VideoProcessingStatus.READY,
+          moderationStatus: { $ne: ModerationStatus.REMOVED },
         })
         .populate('user', 'firstName lastName email')
         .sort({
@@ -91,6 +107,7 @@ export class VideoService {
       this.videoModel.countDocuments({
         user: { $in: followingIds },
         processingStatus: VideoProcessingStatus.READY,
+        moderationStatus: { $ne: ModerationStatus.REMOVED },
       }),
     ]);
 
@@ -124,6 +141,7 @@ export class VideoService {
     const query: any = {
       user: { $in: followingIds },
       processingStatus: VideoProcessingStatus.READY,
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
     };
 
     // Cursor condition
@@ -206,7 +224,9 @@ export class VideoService {
     },
     currentUserId?: string,
   ) {
-    const query: any = {};
+    const query: any = {
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
+    };
 
     if (filters?.userId) {
       query.user = new Types.ObjectId(filters.userId);
@@ -273,6 +293,14 @@ export class VideoService {
       .lean();
 
     if (!video) {
+      throw new NotFoundException('Video not found');
+    }
+
+    // Hide content removed by moderation from everyone except its owner.
+    if (
+      video.moderationStatus === ModerationStatus.REMOVED &&
+      (!viewerId || video.user._id.toString() !== viewerId)
+    ) {
       throw new NotFoundException('Video not found');
     }
 
@@ -407,6 +435,7 @@ export class VideoService {
     const query = {
       user: new Types.ObjectId(userId),
       processingStatus: VideoProcessingStatus.READY,
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
     };
 
     const [videos, total] = await Promise.all([

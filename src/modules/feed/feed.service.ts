@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import type { PaginateModel } from 'mongoose';
-import { Video } from '../../database/schemas/video/video.schema';
+import type { PaginateModel, Model } from 'mongoose';
+import { Video, ModerationStatus } from '../../database/schemas/video/video.schema';
 import { LikesService } from '../likes/likes.service';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
+import { User } from '../../database/schemas/user/user.schema';
 import { Types } from 'mongoose';
 
 
@@ -12,8 +13,19 @@ export class FeedService {
 constructor(
   @InjectModel(Video.name) private videoModel: PaginateModel<Video>,
   @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
+  @InjectModel(User.name) private userModel: Model<User>,
   private likesService: LikesService,
 ) {}
+
+// Ids of users the viewer has blocked — their content is hidden from feeds.
+private async getBlockedUserIds(userId?: string): Promise<Types.ObjectId[]> {
+  if (!userId) return [];
+  const user = await this.userModel
+    .findById(userId)
+    .select('blockedUsers')
+    .lean();
+  return (user?.blockedUsers as Types.ObjectId[]) || [];
+}
 
 async getFollowingFeed(userId: string, page = 1, limit = 20) {
   const skip = (page - 1) * limit;
@@ -39,9 +51,17 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
     };
   }
 
+  const blockedIds = await this.getBlockedUserIds(userId);
+  const visibleFollowingIds = blockedIds.length
+    ? followingIds.filter(
+        id => !blockedIds.some(b => b.toString() === id.toString()),
+      )
+    : followingIds;
+
   const query = {
-    user: { $in: followingIds },
+    user: { $in: visibleFollowingIds },
     processingStatus: 'ready',
+    moderationStatus: { $ne: ModerationStatus.REMOVED },
   };
 
   const totalDocs = await this.videoModel.countDocuments(query);
@@ -82,9 +102,15 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
 async getGlobalFeed(page = 1, limit = 20, userId?: string) {
   const skip = (page - 1) * limit;
 
-  const query = {
+  const blockedIds = await this.getBlockedUserIds(userId);
+
+  const query: any = {
     processingStatus: 'ready',
+    moderationStatus: { $ne: ModerationStatus.REMOVED },
   };
+  if (blockedIds.length) {
+    query.user = { $nin: blockedIds };
+  }
 
   const totalDocs = await this.videoModel.countDocuments(query);
 
@@ -178,9 +204,18 @@ async getGlobalFeed(page = 1, limit = 20, userId?: string) {
   ) {
     const skip = (page - 1) * limit;
 
+    const blockedIds = await this.getBlockedUserIds(userId);
+    const baseQuery: any = {
+      processingStatus: 'ready',
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
+    };
+    if (blockedIds.length) {
+      baseQuery.user = { $nin: blockedIds };
+    }
+
     /* 1️⃣ Fetch all READY videos */
     const videos = await this.videoModel
-      .find({ processingStatus: 'ready' })
+      .find(baseQuery)
       .populate('user', 'firstName lastName profileImage')
       .lean();
 

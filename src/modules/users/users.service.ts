@@ -8,7 +8,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
-import { User } from '../../database/schemas/user/user.schema';
+import { User, UserRole } from '../../database/schemas/user/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -42,6 +42,32 @@ async create(createUserDto: CreateUserDto): Promise<User> {
   });
 
   return user.save(); // 🔥 password schema khud hash karega
+}
+
+/**
+ * Auto-promote a user to ADMIN if their email is listed in the
+ * ADMIN_EMAILS env var (comma-separated). Persists the change and
+ * returns the (possibly mutated) user so the issued JWT carries the
+ * correct role.
+ */
+async ensureAdminRole(user: User): Promise<User> {
+  const adminEmails = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (
+    user?.email &&
+    adminEmails.includes(user.email.toLowerCase()) &&
+    user.role !== UserRole.ADMIN
+  ) {
+    user.role = UserRole.ADMIN;
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { $set: { role: UserRole.ADMIN } },
+    );
+  }
+  return user;
 }
 
 

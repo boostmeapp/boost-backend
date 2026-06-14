@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Video } from 'src/database/schemas';
@@ -6,6 +10,7 @@ import { Comment } from './comment.schema';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CommentResponse } from './interfaces/comment.interface';
 import { CommentWithVideoUser } from './types/comment-populated.type';
+import { scanText } from '../../common/utils/content-filter.util';
 
 @Injectable()
 export class CommentsService {
@@ -15,6 +20,13 @@ export class CommentsService {
   ) {}
 
   async create(userId: string, dto: CreateCommentDto) {
+    // Content filter: reject objectionable language in comments
+    if (!scanText(dto.content).clean) {
+      throw new BadRequestException(
+        'Your comment contains language that violates our Community Guidelines.',
+      );
+    }
+
     const video = await this.videoModel.findById(dto.videoId);
     if (!video) throw new NotFoundException('Video not found');
 
@@ -44,6 +56,7 @@ async getVideoComments(
       video: videoId,
       parentComment: null,
       isDeleted: false,
+      isRemoved: false,
     })
     .populate('user', 'firstName lastName')
     .sort({ createdAt: -1 })
@@ -60,6 +73,7 @@ async getVideoComments(
     .find({
       parentComment: commentId,
       isDeleted: false,
+      isRemoved: false,
     })
     .populate('user', 'firstName lastName')
     .sort({ createdAt: 1 })

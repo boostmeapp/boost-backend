@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 
 export enum UserRole {
@@ -81,7 +81,13 @@ export class User extends Document {
   @Prop()
   gender?: string;
 
+  // Moderation: users this user has blocked (their content is hidden)
+  @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
+  blockedUsers: Types.ObjectId[];
 
+  // App Store compliance: timestamp the user accepted the EULA / community guidelines
+  @Prop()
+  eulaAcceptedAt?: Date;
 
   async validatePassword(password: string): Promise<boolean> {
     return bcrypt.compare(password, this.password);

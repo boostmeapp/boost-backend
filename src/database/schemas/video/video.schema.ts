@@ -9,6 +9,12 @@ export enum VideoProcessingStatus {
   FAILED = 'failed',
 }
 
+export enum ModerationStatus {
+  ACTIVE = 'active', // visible
+  FLAGGED = 'flagged', // reported, under review, still visible
+  REMOVED = 'removed', // hidden by admin / auto-moderation
+}
+
 // HLS chunk info
 export class VideoChunk {
   
@@ -124,6 +130,27 @@ export class Video extends Document {
 
   @Prop({ default: 0 })
   rewardEligibleViews: number; // Views that earned rewards
+
+  // Moderation
+  @Prop({
+    type: String,
+    enum: ModerationStatus,
+    default: ModerationStatus.ACTIVE,
+    index: true,
+  })
+  moderationStatus: ModerationStatus;
+
+  @Prop({ default: 0 })
+  reportCount: number;
+
+  @Prop()
+  removedReason?: string;
+
+  @Prop()
+  removedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  removedBy?: Types.ObjectId;
 
   createdAt: Date;
   updatedAt: Date;

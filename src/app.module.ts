@@ -28,6 +28,7 @@ import { ENV } from './config';
 import { CommentsModule } from './modules/comments/comments.module';
 import { SearchModule } from './modules/search/search/search.module';
 import { MailerModule } from './modules/mailer/mailer.module';
+import { ModerationModule } from './modules/moderation/moderation.module';
 
 @Module({
   imports: [
@@ -104,6 +105,7 @@ ConfigModule.forRoot({
     StripeConnectModule,
     PayoutModule,
     HealthModule,
+    ModerationModule,
     AdminModule,
   ],
   controllers: [AppController],

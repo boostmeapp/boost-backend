@@ -46,10 +46,16 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
-    const user = await this.usersService.create({
-      ...registerDto,
+    const { acceptedEula, ...rest } = registerDto;
+    let user = await this.usersService.create({
+      ...rest,
       email: registerDto.email.trim().toLowerCase(),
-    });
+      // Record EULA acceptance timestamp (App Store Guideline 1.2)
+      eulaAcceptedAt: acceptedEula ? new Date() : undefined,
+    } as any);
+
+    // Auto-promote to admin if the email is configured in ADMIN_EMAILS
+    user = await this.usersService.ensureAdminRole(user);
 
     const tokens = await this.tokenService.generateTokens(user);
 
@@ -82,6 +88,9 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
+
+    // Auto-promote to admin if the email is configured in ADMIN_EMAILS
+    await this.usersService.ensureAdminRole(user);
 
     const userId = new Types.ObjectId(user._id);
 

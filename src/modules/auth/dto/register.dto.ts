@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, MaxLength, IsOptional, IsBoolean } from 'class-validator';
 
 export class RegisterDto {
   @IsEmail()
@@ -22,4 +22,9 @@ export class RegisterDto {
   @IsString()
   @MaxLength(50)
   lastName?: string;
+
+  // App Store compliance: user must accept the EULA / community guidelines
+  @IsOptional()
+  @IsBoolean()
+  acceptedEula?: boolean;
 }

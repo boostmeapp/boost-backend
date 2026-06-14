@@ -5,11 +5,13 @@ import { FeedController } from './feed.controller';
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { LikesModule } from '../likes/likes.module';
 import { Follow, FollowSchema } from 'src/database/schemas/follow/follow.schema';
+import { User, UserSchema } from '../../database/schemas/user/user.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([ { name: Video.name, schema: VideoSchema },
-      { name: Follow.name, schema: FollowSchema },])
+      { name: Follow.name, schema: FollowSchema },
+      { name: User.name, schema: UserSchema },])
     ,
     LikesModule,
   ],

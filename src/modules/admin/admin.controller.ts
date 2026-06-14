@@ -3,6 +3,8 @@ import {
   Delete,
   Param,
   Patch,
+  Post,
+  Body,
   Get,
   UseGuards,
   HttpCode,
@@ -11,8 +13,9 @@ import {
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard, RolesGuard } from '../../common/guards';
-import { Roles } from '../../common/decorators';
-import { UserRole } from '../../database/schemas/user/user.schema';
+import { Roles, CurrentUser } from '../../common/decorators';
+import { User, UserRole } from '../../database/schemas/user/user.schema';
+import { ResolveReportDto } from './dto/resolve-report.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -100,5 +103,74 @@ export class AdminController {
   @Get('rewards/stats')
   getGlobalRewardStats() {
     return this.adminService.getGlobalRewardStats();
+  }
+
+  // ── Dashboard ────────────────────────────────────────────────
+  @Get('dashboard')
+  getDashboard() {
+    return this.adminService.getDashboardStats();
+  }
+
+  // ── Content moderation: reports ──────────────────────────────
+  @Get('reports')
+  getReports(
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.adminService.getReports(
+      status,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    );
+  }
+
+  @Get('reports/stats')
+  getReportStats() {
+    return this.adminService.getReportStats();
+  }
+
+  @Post('reports/:id/resolve')
+  @HttpCode(HttpStatus.OK)
+  resolveReport(
+    @Param('id') id: string,
+    @CurrentUser() admin: User,
+    @Body() dto: ResolveReportDto,
+  ) {
+    return this.adminService.resolveReport(id, admin._id.toString(), dto);
+  }
+
+  // ── Content moderation: posts ────────────────────────────────
+  @Get('videos')
+  getVideos(
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.adminService.getAllVideosAdmin(
+      status,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    );
+  }
+
+  @Patch('videos/:id/remove')
+  removeVideo(
+    @Param('id') id: string,
+    @CurrentUser() admin: User,
+    @Query('reason') reason?: string,
+  ) {
+    return this.adminService.removeVideo(id, admin._id.toString(), reason);
+  }
+
+  @Patch('videos/:id/restore')
+  restoreVideo(@Param('id') id: string) {
+    return this.adminService.restoreVideo(id);
+  }
+
+  // ── Content moderation: comments ─────────────────────────────
+  @Patch('comments/:id/remove')
+  removeComment(@Param('id') id: string) {
+    return this.adminService.removeComment(id);
   }
 }
