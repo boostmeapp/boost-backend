@@ -15,6 +15,12 @@ export class MailerService implements OnModuleInit {
   private transporter: nodemailer.Transporter | null = null;
 
   onModuleInit() {
+    // Prefer Brevo HTTP API (works where outbound SMTP is blocked, e.g. Render)
+    if (ENV.BREVO_API_KEY) {
+      this.logger.log('Mailer using Brevo HTTP API');
+      return;
+    }
+
     if (!ENV.SMTP_HOST) {
       this.logger.warn(
         'SMTP_HOST not configured — emails will be logged only (dev mode).',
@@ -30,12 +36,36 @@ export class MailerService implements OnModuleInit {
         ENV.SMTP_USER && ENV.SMTP_PASSWORD
           ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASSWORD }
           : undefined,
+      // Fail fast instead of hanging when the host blocks outbound SMTP
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+    });
+
+    // Verify connectivity at boot so the logs reveal SMTP egress problems
+    this.transporter.verify((err) => {
+      if (err) {
+        this.logger.error(
+          `SMTP verify FAILED (host may block outbound SMTP): ${(err as Error).message}`,
+        );
+      } else {
+        this.logger.log('SMTP transporter verified — ready to send');
+      }
     });
   }
 
   private async send({ to, subject, html, text }: SendArgs): Promise<void> {
+    const textBody = text || stripHtml(html);
+
+    // 1) Brevo HTTP API (preferred — survives SMTP-blocked hosts)
+    if (ENV.BREVO_API_KEY) {
+      await this.sendViaBrevo(to, subject, html, textBody);
+      return;
+    }
+
+    // 2) SMTP fallback
     if (!this.transporter) {
-      this.logger.warn(`[MAIL:DEV] to=${to} subject="${subject}"\n${text || html}`);
+      this.logger.warn(`[MAIL:DEV] to=${to} subject="${subject}"\n${textBody}`);
       return;
     }
 
@@ -45,11 +75,58 @@ export class MailerService implements OnModuleInit {
         to,
         subject,
         html,
-        text: text || stripHtml(html),
+        text: textBody,
       });
       this.logger.log(`Email sent to ${to} (${subject})`);
     } catch (err) {
       this.logger.error(`Failed to send mail to ${to}`, err as Error);
+      throw err;
+    }
+  }
+
+  private brevoSender(): { email: string; name: string } {
+    if (ENV.BREVO_SENDER_EMAIL) {
+      return { email: ENV.BREVO_SENDER_EMAIL, name: ENV.BREVO_SENDER_NAME };
+    }
+    // Fall back to parsing MAIL_FROM ("Name <email>" or "Name email")
+    const from = ENV.MAIL_FROM || '';
+    const angle = from.match(/<([^>]+)>/);
+    const email = angle ? angle[1] : (from.match(/[^\s]+@[^\s]+/)?.[0] || from);
+    return { email: email.trim(), name: ENV.BREVO_SENDER_NAME };
+  }
+
+  private async sendViaBrevo(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+  ): Promise<void> {
+    try {
+      // Node 18+ global fetch; cast avoids missing-type issues on older @types/node
+      const fetchFn: any = (globalThis as any).fetch;
+      const res = await fetchFn('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': ENV.BREVO_API_KEY,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({
+          sender: this.brevoSender(),
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Brevo ${res.status}: ${body}`);
+      }
+      this.logger.log(`Email sent via Brevo to ${to} (${subject})`);
+    } catch (err) {
+      this.logger.error(`Brevo send failed to ${to}`, err as Error);
       throw err;
     }
   }

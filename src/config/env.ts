@@ -151,6 +151,19 @@ export class ENV {
     return configService.get<string>('MAIL_FROM', 'BoostMe <no-reply@boostme.app>');
   }
 
+  // Brevo (HTTP email API — works where outbound SMTP is blocked, e.g. Render)
+  static get BREVO_API_KEY(): string {
+    return configService.get<string>('BREVO_API_KEY', '');
+  }
+
+  static get BREVO_SENDER_EMAIL(): string {
+    return configService.get<string>('BREVO_SENDER_EMAIL', '');
+  }
+
+  static get BREVO_SENDER_NAME(): string {
+    return configService.get<string>('BREVO_SENDER_NAME', this.APP_NAME);
+  }
+
   static get APP_NAME(): string {
     return configService.get<string>('APP_NAME', 'BoostMe');
   }
