@@ -51,20 +51,27 @@ async create(createUserDto: CreateUserDto): Promise<User> {
  * correct role.
  */
 async ensureAdminRole(user: User): Promise<User> {
+  if (!user?.email) return user;
+
   const adminEmails = (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
-  if (
-    user?.email &&
-    adminEmails.includes(user.email.toLowerCase()) &&
-    user.role !== UserRole.ADMIN
-  ) {
+  const isListed = adminEmails.includes(user.email.toLowerCase());
+
+  // ADMIN_EMAILS is the source of truth: promote listed users, demote unlisted admins.
+  if (isListed && user.role !== UserRole.ADMIN) {
     user.role = UserRole.ADMIN;
     await this.userModel.updateOne(
       { _id: user._id },
       { $set: { role: UserRole.ADMIN } },
+    );
+  } else if (!isListed && user.role === UserRole.ADMIN) {
+    user.role = UserRole.USER;
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { $set: { role: UserRole.USER } },
     );
   }
   return user;
