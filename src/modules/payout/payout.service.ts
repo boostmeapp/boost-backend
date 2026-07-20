@@ -293,6 +293,62 @@ export class PayoutService {
   }
 
   /**
+   * User-initiated withdrawal. Pays out the full available balance to the
+   * user's connected account automatically (no admin approval), provided
+   * balance >= minimum and the Stripe Connect account is ready.
+   */
+  async requestPayout(userId: string) {
+    const userObjectId = new Types.ObjectId(userId);
+    const wallet = await this.walletModel.findOne({ user: userObjectId }).exec();
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+    if (wallet.isLocked) {
+      throw new BadRequestException('Your wallet is currently locked');
+    }
+    if (wallet.balance < MINIMUM_PAYOUT_AMOUNT) {
+      throw new BadRequestException(
+        `Minimum withdrawal amount is £${MINIMUM_PAYOUT_AMOUNT}. Your balance is £${wallet.balance}.`,
+      );
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user?.stripeConnectAccountId) {
+      throw new BadRequestException(
+        'Please connect your bank account before withdrawing.',
+      );
+    }
+    const verification = await this.verifyStripeConnectAccount(
+      user.stripeConnectAccountId,
+    );
+    if (!verification.valid) {
+      throw new BadRequestException(
+        `Bank account not ready: ${verification.reason}`,
+      );
+    }
+
+    // createPayout re-validates balance/connect and is idempotent
+    const payout = await this.createPayout(userId, wallet.balance);
+
+    await this.payoutQueue.add(
+      'process-payout',
+      { payoutId: payout._id.toString() },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 60000 },
+        removeOnComplete: false,
+        removeOnFail: false,
+      },
+    );
+
+    return {
+      success: true,
+      message: 'Withdrawal requested. Funds are on the way to your bank.',
+      payout,
+    };
+  }
+
+  /**
    * Create a payout record with idempotency protection
    */
   async createPayout(

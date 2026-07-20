@@ -22,6 +22,17 @@ export class PayoutController {
   constructor(private readonly payoutService: PayoutService) {}
 
   /**
+   * User: request a withdrawal of the full balance to their bank (auto).
+   */
+  @Post('request')
+  @HttpCode(HttpStatus.OK)
+  async requestPayout(@CurrentUser() user: any) {
+    return this.payoutService.requestPayout(
+      user.userId || user.id || user._id?.toString(),
+    );
+  }
+
+  /**
    * Get current user's payout history
    */
   @Get('my-payouts')

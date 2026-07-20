@@ -19,7 +19,18 @@ export const REWARD_CONFIG = {
 };
 
 export enum BoostPackage {
-  CUSTOM = 'custom', // User can choose any amount €1-€100
+  CUSTOM = 'custom', // Legacy: user chose any amount €1-€100 (Stripe)
+  IAP = 'iap', // One-time fixed-duration package bought via App Store / Play billing
+}
+
+export enum BoostPlatform {
+  IOS = 'ios',
+  ANDROID = 'android',
+}
+
+export enum BoostSource {
+  STRIPE = 'stripe', // legacy
+  IAP = 'iap',
 }
 
 export const BOOST_PACKAGES = {
@@ -69,6 +80,21 @@ endDate?: Date;
   @Prop({ type: Types.ObjectId, ref: 'Transaction' })
   transaction: Types.ObjectId;
 
+  // ── In-App Purchase (App Store / Google Play) ──
+  @Prop({ type: String, enum: BoostSource, default: BoostSource.STRIPE })
+  source: BoostSource;
+
+  @Prop({ type: String, enum: BoostPlatform })
+  platform?: BoostPlatform;
+
+  // The purchased BoostProduct key
+  @Prop()
+  productKey?: string;
+
+  // Store transaction id — unique to prevent replay / double-activation
+  @Prop({ index: true })
+  storeTransactionId?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,3 +105,8 @@ export const BoostSchema = SchemaFactory.createForClass(Boost);
 BoostSchema.index({ video: 1, status: 1 });
 BoostSchema.index({ user: 1, createdAt: -1 });
 BoostSchema.index({ status: 1, startDate: 1, endDate: 1 });
+// Prevent the same store purchase from activating two boosts
+BoostSchema.index(
+  { storeTransactionId: 1 },
+  { unique: true, sparse: true },
+);

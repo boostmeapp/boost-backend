@@ -151,6 +151,33 @@ export class ENV {
     return configService.get<string>('MAIL_FROM', 'BoostMe <no-reply@boostme.app>');
   }
 
+  // Coins: how many coins equal 1 GBP of promote budget (default 100 → 1 coin = £0.01)
+  static get COINS_PER_GBP(): number {
+    return Number(configService.get<string>('COINS_PER_GBP', '100'));
+  }
+
+  // RevenueCat webhook Authorization header secret
+  static get REVENUECAT_WEBHOOK_SECRET(): string {
+    return configService.get<string>('REVENUECAT_WEBHOOK_SECRET', '');
+  }
+
+  // In-App Purchase validation (App Store / Google Play)
+  static get APPLE_IAP_SHARED_SECRET(): string {
+    return configService.get<string>('APPLE_IAP_SHARED_SECRET', '');
+  }
+
+  static get GOOGLE_PLAY_ACCESS_TOKEN(): string {
+    return configService.get<string>('GOOGLE_PLAY_ACCESS_TOKEN', '');
+  }
+
+  static get GOOGLE_PLAY_PACKAGE_NAME(): string {
+    return configService.get<string>('GOOGLE_PLAY_PACKAGE_NAME', '');
+  }
+
+  static get ALLOW_UNVERIFIED_IAP(): boolean {
+    return configService.get<string>('ALLOW_UNVERIFIED_IAP', 'false') === 'true';
+  }
+
   // Brevo (HTTP email API — works where outbound SMTP is blocked, e.g. Render)
   static get BREVO_API_KEY(): string {
     return configService.get<string>('BREVO_API_KEY', '');

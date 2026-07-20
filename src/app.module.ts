@@ -29,6 +29,7 @@ import { CommentsModule } from './modules/comments/comments.module';
 import { SearchModule } from './modules/search/search/search.module';
 import { MailerModule } from './modules/mailer/mailer.module';
 import { ModerationModule } from './modules/moderation/moderation.module';
+import { CoinsModule } from './modules/coins/coins.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ ConfigModule.forRoot({
     PayoutModule,
     HealthModule,
     ModerationModule,
+    CoinsModule,
     AdminModule,
   ],
   controllers: [AppController],

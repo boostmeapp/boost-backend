@@ -89,6 +89,10 @@ export class User extends Document {
   @Prop()
   eulaAcceptedAt?: Date;
 
+  // Virtual currency used to promote videos (bought via IAP; NOT cash).
+  @Prop({ default: 0, min: 0 })
+  coinBalance: number;
+
   async validatePassword(password: string): Promise<boolean> {
     return bcrypt.compare(password, this.password);
   }
