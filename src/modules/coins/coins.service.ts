@@ -207,6 +207,40 @@ export class CoinsService implements OnModuleInit {
     return { coinBalance: user.coinBalance };
   }
 
+  /**
+   * Refund unused coins to user's balance when a promotion is cancelled early.
+   */
+  async refundCoins(
+    userId: string,
+    coins: number,
+    description: string,
+    ref?: string,
+  ): Promise<{ coinBalance: number }> {
+    if (coins <= 0) {
+      const bal = await this.getBalance(userId);
+      return { coinBalance: bal.coinBalance };
+    }
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $inc: { coinBalance: coins } },
+      { new: true },
+    );
+    if (!user) throw new NotFoundException('User not found');
+
+    await this.txnModel.create({
+      user: new Types.ObjectId(userId),
+      type: CoinTxnType.REFUND,
+      coins: coins,
+      balanceAfter: user.coinBalance,
+      description,
+      ref,
+    });
+
+    this.logger.log(`Refunded ${coins} coins to user ${userId}`);
+    return { coinBalance: user.coinBalance };
+  }
+
   // ── Admin ──
   async adminListPackages() {
     return this.packageModel.find().sort({ sortOrder: 1 }).lean();

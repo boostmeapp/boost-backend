@@ -201,7 +201,7 @@ export class BoostService implements OnModuleInit {
       .exec();
   }
 
-  async cancelBoost(userId: string, boostId: string): Promise<Boost> {
+  async cancelBoost(userId: string, boostId: string): Promise<any> {
     const boost = await this.boostModel.findById(boostId).exec();
 
     if (!boost) {
@@ -216,16 +216,45 @@ export class BoostService implements OnModuleInit {
       throw new BadRequestException('Only active boosts can be cancelled');
     }
 
+    // 💰 Calculate prorated unused coins to refund
+    let coinsToRefund = 0;
+    if (boost.amount > 0 && boost.startDate && boost.endDate) {
+      const totalCoins = Math.round(boost.amount * ENV.COINS_PER_GBP);
+      const startTime = new Date(boost.startDate).getTime();
+      const endTime = new Date(boost.endDate).getTime();
+      const totalDurationMs = Math.max(1, endTime - startTime);
+      const remainingTimeMs = Math.max(0, endTime - Date.now());
+      const unusedRatio = Math.min(1, remainingTimeMs / totalDurationMs);
+
+      coinsToRefund = Math.floor(totalCoins * unusedRatio);
+    }
+
     boost.status = BoostStatus.CANCELLED;
     const savedBoost = await boost.save();
 
-    // Update video
+    // Reset video boost status
     await this.videoModel.findByIdAndUpdate(boost.video, {
       isBoosted: false,
       boostScore: 0,
+      hasRewardPool: false,
     });
 
-    return savedBoost;
+    let coinBalance: number | undefined = undefined;
+    if (coinsToRefund > 0) {
+      const refundRes = await this.coinsService.refundCoins(
+        userId,
+        coinsToRefund,
+        `Unused boost refund (${coinsToRefund} coins returned)`,
+        boost.video.toString(),
+      );
+      coinBalance = refundRes.coinBalance;
+    }
+
+    return {
+      boost: savedBoost,
+      refundedCoins: coinsToRefund,
+      coinBalance,
+    };
   }
 
   // Note: Boosts now expire automatically when reward pool is depleted
