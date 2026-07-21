@@ -449,7 +449,7 @@ export class VideoService {
     const [videos, total] = await Promise.all([
       this.videoModel
         .find(query)
-        .select('thumbnailUrl duration viewCount createdAt')
+        .select('thumbnailUrl videoUrl duration viewCount views likes createdAt')
         .sort({
           isBoosted: -1,
           boostScore: -1,

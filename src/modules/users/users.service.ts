@@ -123,7 +123,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
   })
   .sort({ createdAt: -1 })
   .limit(12)
-  .select("thumbnailUrl duration viewCount likeCount")
+  .select("thumbnailUrl videoUrl duration viewCount views likeCount")
   .lean();
 
   return {
