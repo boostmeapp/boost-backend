@@ -260,10 +260,10 @@ export class BoostService implements OnModuleInit {
 
   /** Active Boost packages for the app store front. */
   async getActiveProducts(): Promise<BoostProduct[]> {
-    return this.boostProductModel
+    return (await this.boostProductModel
       .find({ isActive: true })
       .sort({ sortOrder: 1 })
-      .lean();
+      .lean()) as unknown as BoostProduct[];
   }
 
   /**
@@ -484,11 +484,11 @@ export class BoostService implements OnModuleInit {
 
   /** User's boosts (for "restore purchases" / history). */
   async getMyPurchases(userId: string): Promise<Boost[]> {
-    return this.boostModel
+    return (await this.boostModel
       .find({ user: new Types.ObjectId(userId), source: BoostSource.IAP })
       .sort({ createdAt: -1 })
       .populate('video', 'title thumbnailUrl')
-      .lean();
+      .lean()) as unknown as Boost[];
   }
 
   /**
@@ -517,7 +517,10 @@ export class BoostService implements OnModuleInit {
 
   // ── Admin: Boost product catalog CRUD ──────────────────────────────
   async adminListProducts(): Promise<BoostProduct[]> {
-    return this.boostProductModel.find().sort({ sortOrder: 1 }).lean();
+    return (await this.boostProductModel
+      .find()
+      .sort({ sortOrder: 1 })
+      .lean()) as unknown as BoostProduct[];
   }
 
   async adminCreateProduct(data: Partial<BoostProduct>): Promise<BoostProduct> {

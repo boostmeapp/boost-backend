@@ -48,7 +48,10 @@ export class CoinsService implements OnModuleInit {
   }
 
   async getActivePackages(): Promise<CoinPackage[]> {
-    return this.packageModel.find({ isActive: true }).sort({ sortOrder: 1 }).lean();
+    return (await this.packageModel
+      .find({ isActive: true })
+      .sort({ sortOrder: 1 })
+      .lean()) as unknown as CoinPackage[];
   }
 
   async getBalance(userId: string): Promise<{ coinBalance: number }> {
@@ -57,11 +60,11 @@ export class CoinsService implements OnModuleInit {
   }
 
   async getHistory(userId: string, limit = 50): Promise<CoinTransaction[]> {
-    return this.txnModel
+    return (await this.txnModel
       .find({ user: new Types.ObjectId(userId) })
       .sort({ createdAt: -1 })
       .limit(limit)
-      .lean();
+      .lean()) as unknown as CoinTransaction[];
   }
 
   /**
