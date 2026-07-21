@@ -7,6 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Video, VideoProcessingStatus, ModerationStatus } from '../../database/schemas/video/video.schema';
+import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
 import { CreateVideoDto, UpdateVideoDto } from './dto';
 import { LikesService } from '../likes/likes.service';
 import { FollowsService } from '../follows/follows.service';
@@ -17,6 +18,7 @@ import { scanText } from '../../common/utils/content-filter.util';
 export class VideoService {
   constructor(
     @InjectModel(Video.name) private videoModel: Model<Video>,
+    @InjectModel(Boost.name) private boostModel: Model<Boost>,
     private readonly likesService: LikesService,
     private readonly followsService: FollowsService,
   ) { }
@@ -365,12 +367,18 @@ export class VideoService {
   }
 
   /**
-   * Increment view count
+   * Increment view count for video & active boost
    */
   async incrementViewCount(id: string): Promise<void> {
-    await this.videoModel.findByIdAndUpdate(id, {
-      $inc: { viewCount: 1 },
-    }).exec();
+    await Promise.all([
+      this.videoModel.findByIdAndUpdate(id, {
+        $inc: { viewCount: 1 },
+      }).exec(),
+      this.boostModel.updateMany(
+        { video: new Types.ObjectId(id), status: BoostStatus.ACTIVE },
+        { $inc: { currentViews: 1 } },
+      ).exec(),
+    ]);
   }
 
   /**
