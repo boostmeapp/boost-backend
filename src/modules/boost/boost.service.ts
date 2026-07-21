@@ -485,9 +485,9 @@ export class BoostService implements OnModuleInit {
   /** User's boosts (for "restore purchases" / history). */
   async getMyPurchases(userId: string): Promise<Boost[]> {
     return (await this.boostModel
-      .find({ user: new Types.ObjectId(userId), source: BoostSource.IAP })
+      .find({ user: new Types.ObjectId(userId) })
       .sort({ createdAt: -1 })
-      .populate('video', 'title thumbnailUrl')
+      .populate('video', 'title thumbnailUrl views likes videoUrl')
       .lean()) as unknown as Boost[];
   }
 
