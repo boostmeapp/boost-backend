@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
+import * as fs from 'fs';
 import { UploadType } from './dto';
 
 export interface SignedUploadUrl {
@@ -204,11 +205,14 @@ async generateProfileImageUploadUrl(
     // Generate unique key
     const key = this.generateS3Key(userId, type, file.originalname);
 
+    const body = file.buffer || (file.path ? fs.createReadStream(file.path) : undefined);
+
     // Create PutObject command
     const command = new PutObjectCommand({
       Bucket: this.bucketName,
       Key: key,
-      Body: file.buffer,
+      Body: body,
+      ContentLength: file.size,
       ContentType: file.mimetype,
       Metadata: {
         userId,
@@ -235,6 +239,14 @@ async generateProfileImageUploadUrl(
       throw new BadRequestException(
         `Failed to upload file to S3: ${error.message}`,
       );
+    } finally {
+      if (file.path && fs.existsSync(file.path)) {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (e) {
+          // ignore cleanup error
+        }
+      }
     }
   }
 }

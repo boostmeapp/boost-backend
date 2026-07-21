@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
+import { memoryStorage, diskStorage } from 'multer';
 import { UploadService } from './upload.service';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
@@ -66,7 +66,7 @@ export class UploadController {
   @Post('video')
 @UseInterceptors(
   FileInterceptor('file', {
-    storage: memoryStorage(),
+    storage: diskStorage({ destination: '/tmp' }),
     limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
     fileFilter: (_, file, cb) => {
       if (!file.mimetype.startsWith('video/')) {
@@ -83,7 +83,7 @@ async uploadVideo(
   @CurrentUser() user: User,
   @UploadedFile() file: Express.Multer.File,
 ) {
-  if (!file?.buffer) {
+  if (!file?.buffer && !file?.path) {
     throw new BadRequestException('Video file is required');
   }
 
