@@ -23,7 +23,7 @@ export class UploadController {
     private readonly usersService: UsersService, // ✅ ADD
   ) {}
 
-  // ✅ SINGLE FINAL ENDPOINT
+  // ✅ SINGLE FINAL ENDPOINT FOR PROFILE IMAGES
   @Post('profile-image')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -60,8 +60,49 @@ export class UploadController {
       profileImage: url,
     });
 
-    // 3️⃣ RETURN USER (NO EXTRA API)
-    return updatedUser;
+    return {
+      success: true,
+      url,
+      user: updatedUser,
+    };
+  }
+
+  // ✅ DEDICATED ENDPOINT FOR CHAT / GENERAL IMAGES
+  @Post('image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+      fileFilter: (_, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image files allowed'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadChatImage(
+    @CurrentUser() user: User,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    const { url, key } = await this.uploadService.uploadFile(
+      user.id,
+      UploadType.PROFILE_IMAGE,
+      file,
+    );
+
+    return {
+      success: true,
+      url,
+      key,
+    };
   }
   @Post('video')
 @UseInterceptors(
