@@ -30,6 +30,7 @@ import { SearchModule } from './modules/search/search/search.module';
 import { MailerModule } from './modules/mailer/mailer.module';
 import { ModerationModule } from './modules/moderation/moderation.module';
 import { CoinsModule } from './modules/coins/coins.module';
+import { ChatModule } from './modules/chat/chat.module';
 
 @Module({
   imports: [
@@ -109,6 +110,7 @@ ConfigModule.forRoot({
     ModerationModule,
     CoinsModule,
     AdminModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [

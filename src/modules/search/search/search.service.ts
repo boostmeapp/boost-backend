@@ -29,21 +29,26 @@ export class SearchService {
   }
 
   async searchUsers(query: string, page = 1, limit = 20) {
+    const q = (query || '').trim();
+    const filter: any = { isBanned: { $ne: true } };
+
+    if (q) {
+      const searchRegex = new RegExp(q, 'i');
+      filter.$or = [
+        { username: searchRegex },
+        { name: searchRegex },
+        { firstName: searchRegex },
+        { lastName: searchRegex },
+        { email: searchRegex },
+      ];
+    }
+
     return this.userModel
-      .find(
-        {
-          $text: { $search: query },
-          isActive: true,
-          isBanned: false,
-        },
-        {
-          score: { $meta: 'textScore' },
-        },
-      )
-      .sort({ score: { $meta: 'textScore' } })
+      .find(filter)
+      .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
-      .select('firstName lastName followerCount profileImage username')
+      .select('firstName lastName username avatar profileImage name isVerified')
       .lean();
   }
 

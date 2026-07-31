@@ -1,0 +1,69 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { ChatService } from './chat.service';
+import { JwtAuthGuard } from '../../common/guards';
+import { CurrentUser } from '../../common/decorators';
+import { User } from '../../database/schemas/user/user.schema';
+
+@Controller('chat')
+@UseGuards(JwtAuthGuard)
+export class ChatController {
+  constructor(private readonly chatService: ChatService) {}
+
+  @Get('conversations')
+  async getConversations(
+    @CurrentUser() user: User,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+  ) {
+    return this.chatService.getUserConversations(
+      user._id.toString(),
+      Number(page),
+      Number(limit),
+    );
+  }
+
+  @Get('messages/:conversationId')
+  async getMessages(
+    @CurrentUser() user: User,
+    @Param('conversationId') conversationId: string,
+    @Query('page') page = 1,
+    @Query('limit') limit = 50,
+  ) {
+    return this.chatService.getMessages(
+      conversationId,
+      user._id.toString(),
+      Number(page),
+      Number(limit),
+    );
+  }
+
+  @Post('start/:recipientId')
+  async startConversation(
+    @CurrentUser() user: User,
+    @Param('recipientId') recipientId: string,
+  ) {
+    return this.chatService.getOrCreateConversation(
+      user._id.toString(),
+      recipientId,
+    );
+  }
+
+  @Patch('read/:conversationId')
+  async markAsRead(
+    @CurrentUser() user: User,
+    @Param('conversationId') conversationId: string,
+  ) {
+    return this.chatService.markAsRead(
+      conversationId,
+      user._id.toString(),
+    );
+  }
+}

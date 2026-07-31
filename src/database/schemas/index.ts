@@ -9,3 +9,5 @@ export * from './coin/coin-transaction.schema';
 export * from './payout';
 export * from './verification/verification-token.schema';
 export * from './report/report.schema';
+export * from './chat/conversation.schema';
+export * from './chat/message.schema';
