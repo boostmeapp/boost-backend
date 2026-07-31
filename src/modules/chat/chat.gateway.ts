@@ -160,4 +160,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     }
   }
+
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; conversationId: string },
+  ) {
+    const userId = client.data.userId;
+    if (!userId || !data?.messageId || !data?.conversationId) return;
+
+    try {
+      await this.chatService.deleteMessage(data.messageId, userId);
+      this.server.to(`conv_${data.conversationId}`).emit('messageDeleted', {
+        messageId: data.messageId,
+        conversationId: data.conversationId,
+      });
+    } catch (err) {
+      this.logger.error(`deleteMessage error: ${err.message}`);
+    }
+  }
 }

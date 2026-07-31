@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
@@ -63,6 +64,17 @@ export class ChatController {
   ) {
     return this.chatService.markAsRead(
       conversationId,
+      user._id.toString(),
+    );
+  }
+
+  @Delete('messages/:messageId')
+  async deleteMessage(
+    @CurrentUser() user: User,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.chatService.deleteMessage(
+      messageId,
       user._id.toString(),
     );
   }

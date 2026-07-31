@@ -192,8 +192,11 @@ export class ChatService {
       .populate('sender', 'username firstName lastName name avatar profileImage')
       .exec();
 
-    const resultObj = populatedMessage.toObject();
-    if (resultObj.image) {
+    const resultObj: any = populatedMessage
+      ? populatedMessage.toObject()
+      : message.toObject();
+
+    if (resultObj && resultObj.image) {
       resultObj.image = await this.signImageUrl(resultObj.image);
     }
 
@@ -236,5 +239,26 @@ export class ChatService {
     }
 
     return { success: true };
+  }
+
+  /**
+   * Delete a message by ID
+   */
+  async deleteMessage(messageId: string, userId: string) {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+
+    const currentUserIdStr = String(userId);
+    const senderIdStr = String(message.sender);
+    const recipientIdStr = String(message.recipient);
+
+    if (currentUserIdStr !== senderIdStr && currentUserIdStr !== recipientIdStr) {
+      throw new ForbiddenException('You cannot delete this message');
+    }
+
+    await this.messageModel.findByIdAndDelete(messageId);
+    return { success: true, messageId, conversationId: message.conversation.toString() };
   }
 }
