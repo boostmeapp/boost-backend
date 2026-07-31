@@ -225,9 +225,12 @@ async generateProfileImageUploadUrl(
       // Upload to S3
       await this.s3Client.send(command);
 
+      // Generate presigned download URL so mobile apps can access the image without 403 Forbidden
+      const { url: signedUrl } = await this.generateDownloadUrl(key);
+
       return {
         key,
-        url: this.getPublicUrl(key),
+        url: signedUrl,
       };
     } catch (error) {
       console.error('S3 Upload Error:', {

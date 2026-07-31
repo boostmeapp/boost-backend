@@ -8,6 +8,7 @@ import { ChatGateway } from './chat.gateway';
 import { Conversation, ConversationSchema } from '../../database/schemas/chat/conversation.schema';
 import { Message, MessageSchema } from '../../database/schemas/chat/message.schema';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { User, UserSchema } from '../../database/schemas/user/user.schema';
     ]),
     JwtModule.register({}),
     ConfigModule,
+    UploadModule,
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],
