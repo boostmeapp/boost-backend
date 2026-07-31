@@ -34,7 +34,7 @@ export class ChatService {
       .findOne({
         participants: { $all: [userA, userB] },
       })
-      .populate('participants', 'username name avatar isVerified');
+      .populate('participants', 'username firstName lastName name avatar profileImage isVerified');
 
     if (!conversation) {
       conversation = await this.conversationModel.create({
@@ -47,7 +47,7 @@ export class ChatService {
 
       conversation = await this.conversationModel
         .findById(conversation._id)
-        .populate('participants', 'username name avatar isVerified');
+        .populate('participants', 'username firstName lastName name avatar profileImage isVerified');
     }
 
     return conversation;
@@ -65,7 +65,7 @@ export class ChatService {
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('participants', 'username name avatar isVerified')
+      .populate('participants', 'username firstName lastName name avatar profileImage isVerified')
       .exec();
 
     const total = await this.conversationModel.countDocuments({
@@ -103,7 +103,7 @@ export class ChatService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('sender', 'username name avatar')
+      .populate('sender', 'username firstName lastName name avatar profileImage')
       .exec();
 
     const total = await this.messageModel.countDocuments({
