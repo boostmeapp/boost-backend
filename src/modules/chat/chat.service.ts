@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, Message, User } from '../../database/schemas';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class ChatService {
@@ -12,7 +13,41 @@ export class ChatService {
     private readonly messageModel: Model<Message>,
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
+    private readonly uploadService: UploadService,
   ) {}
+
+  /**
+   * Helper to ensure an image URL is signed if it comes from private S3
+   */
+  private async signImageUrl(imagePath?: string): Promise<string> {
+    if (!imagePath || typeof imagePath !== 'string') return '';
+    const trimmed = imagePath.trim();
+    if (!trimmed || trimmed === '[object Object]' || trimmed === 'null' || trimmed === 'undefined') return '';
+
+    // If it already has an AWS Signature, return as is
+    if (trimmed.includes('X-Amz-Signature=')) return trimmed;
+
+    // Extract S3 key
+    let key = trimmed;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const parts = trimmed.split('.amazonaws.com/');
+      if (parts.length > 1) {
+        key = parts[1];
+      } else {
+        return trimmed; // external image URL
+      }
+    }
+
+    key = key.replace(/^\//, '');
+    if (!key || key === '[object Object]') return '';
+
+    try {
+      const { url } = await this.uploadService.generateDownloadUrl(key);
+      return url;
+    } catch (e) {
+      return trimmed;
+    }
+  }
 
   /**
    * Get or create a 1-on-1 conversation between two users
@@ -110,8 +145,18 @@ export class ChatService {
       conversation: new Types.ObjectId(conversationId),
     });
 
+    const messagesWithSignedUrls = await Promise.all(
+      messages.map(async (msg) => {
+        const msgObj = msg.toObject();
+        if (msgObj.image) {
+          msgObj.image = await this.signImageUrl(msgObj.image);
+        }
+        return msgObj;
+      }),
+    );
+
     return {
-      data: messages.reverse(),
+      data: messagesWithSignedUrls.reverse(),
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -144,8 +189,13 @@ export class ChatService {
     // Populate sender info
     const populatedMessage = await this.messageModel
       .findById(message._id)
-      .populate('sender', 'username name avatar')
+      .populate('sender', 'username firstName lastName name avatar profileImage')
       .exec();
+
+    const resultObj = populatedMessage.toObject();
+    if (resultObj.image) {
+      resultObj.image = await this.signImageUrl(resultObj.image);
+    }
 
     // Update conversation last message & unread count
     const conversation = await this.conversationModel.findById(conversationId);
@@ -162,7 +212,7 @@ export class ChatService {
       await conversation.save();
     }
 
-    return populatedMessage;
+    return resultObj;
   }
 
   /**
