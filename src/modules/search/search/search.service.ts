@@ -30,18 +30,21 @@ export class SearchService {
 
   async searchUsers(query: string, page = 1, limit = 20) {
     const q = (query || '').trim();
-    const filter: any = { isBanned: { $ne: true } };
+    if (!q) {
+      return [];
+    }
 
-    if (q) {
-      const searchRegex = new RegExp(q, 'i');
-      filter.$or = [
+    const searchRegex = new RegExp(q, 'i');
+    const filter: any = {
+      isBanned: { $ne: true },
+      $or: [
         { username: searchRegex },
         { name: searchRegex },
         { firstName: searchRegex },
         { lastName: searchRegex },
         { email: searchRegex },
-      ];
-    }
+      ],
+    };
 
     return this.userModel
       .find(filter)
