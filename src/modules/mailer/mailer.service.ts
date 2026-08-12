@@ -57,31 +57,32 @@ export class MailerService implements OnModuleInit {
   private async send({ to, subject, html, text }: SendArgs): Promise<void> {
     const textBody = text || stripHtml(html);
 
-    // 1) Brevo HTTP API (preferred — survives SMTP-blocked hosts)
+    // 1) Brevo HTTP API (preferred if configured and working)
     if (ENV.BREVO_API_KEY) {
-      await this.sendViaBrevo(to, subject, html, textBody);
-      return;
+      const brevoSuccess = await this.sendViaBrevo(to, subject, html, textBody);
+      if (brevoSuccess) return;
+      this.logger.warn('Brevo send failed. Attempting SMTP fallback...');
     }
 
-    // 2) SMTP fallback
-    if (!this.transporter) {
-      this.logger.warn(`[MAIL:DEV] to=${to} subject="${subject}"\n${textBody}`);
-      return;
+    // 2) SMTP (Gmail / Custom SMTP)
+    if (this.transporter) {
+      try {
+        await this.transporter.sendMail({
+          from: ENV.MAIL_FROM || `BoostMe <${ENV.SMTP_USER || 'no-reply@boostme.app'}>`,
+          to,
+          subject,
+          html,
+          text: textBody,
+        });
+        this.logger.log(`Email sent to ${to} (${subject}) via SMTP`);
+        return;
+      } catch (err) {
+        this.logger.error(`Failed to send mail to ${to} via SMTP: ${(err as Error).message}`);
+      }
     }
 
-    try {
-      await this.transporter.sendMail({
-        from: ENV.MAIL_FROM || 'BoostMe <no-reply@boostme.app>',
-        to,
-        subject,
-        html,
-        text: textBody,
-      });
-      this.logger.log(`Email sent to ${to} (${subject})`);
-    } catch (err) {
-      this.logger.error(`Failed to send mail to ${to} via SMTP: ${(err as Error).message}`);
-      this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${textBody}`);
-    }
+    // 3) Dev / Fallback log
+    this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${textBody}`);
   }
 
   private brevoSender(): { email: string; name: string } {
@@ -89,7 +90,7 @@ export class MailerService implements OnModuleInit {
       return { email: ENV.BREVO_SENDER_EMAIL, name: ENV.BREVO_SENDER_NAME };
     }
     // Fall back to parsing MAIL_FROM ("Name <email>" or "Name email")
-    const from = ENV.MAIL_FROM || '';
+    const from = ENV.MAIL_FROM || ENV.SMTP_USER || '';
     const angle = from.match(/<([^>]+)>/);
     const email = angle ? angle[1] : (from.match(/[^\s]+@[^\s]+/)?.[0] || from);
     return { email: email.trim() || 'no-reply@boostme.app', name: ENV.BREVO_SENDER_NAME || 'BoostMe' };
@@ -100,7 +101,7 @@ export class MailerService implements OnModuleInit {
     subject: string,
     html: string,
     text: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Node 18+ global fetch; cast avoids missing-type issues on older @types/node
       const fetchFn: any = (globalThis as any).fetch;
@@ -123,13 +124,13 @@ export class MailerService implements OnModuleInit {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         this.logger.error(`Brevo ${res.status}: ${body}`);
-        this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${text}`);
-        return;
+        return false;
       }
       this.logger.log(`Email sent via Brevo to ${to} (${subject})`);
+      return true;
     } catch (err) {
       this.logger.error(`Brevo send failed to ${to}: ${(err as Error).message}`);
-      this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${text}`);
+      return false;
     }
   }
 
