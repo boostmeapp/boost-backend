@@ -27,6 +27,9 @@ export class Conversation extends Document {
   @Prop({ type: Map, of: Number, default: {} })
   unreadCount: Map<string, number>;
 
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
+  archivedBy: Types.ObjectId[];
+
   createdAt: Date;
   updatedAt: Date;
 }

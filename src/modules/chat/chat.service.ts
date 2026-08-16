@@ -89,29 +89,91 @@ export class ChatService {
   }
 
   /**
-   * Get list of conversations for a user
+   * Get list of conversations for a user (Active or Archived)
    */
-  async getUserConversations(userId: string, page = 1, limit = 20) {
+  async getUserConversations(userId: string, page = 1, limit = 20, isArchived = false) {
     const userObjectId = new Types.ObjectId(userId);
     const skip = (page - 1) * limit;
 
+    const query: any = { participants: userObjectId };
+    if (isArchived) {
+      query.archivedBy = userObjectId;
+    } else {
+      query.archivedBy = { $ne: userObjectId };
+    }
+
     const conversations = await this.conversationModel
-      .find({ participants: userObjectId })
+      .find(query)
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate('participants', 'username firstName lastName name avatar profileImage isVerified')
       .exec();
 
-    const total = await this.conversationModel.countDocuments({
-      participants: userObjectId,
-    });
+    const conversationsWithSignedAvatars = await Promise.all(
+      conversations.map(async (conv) => {
+        const convObj = conv.toObject();
+        if (convObj.participants && Array.isArray(convObj.participants)) {
+          convObj.participants = await Promise.all(
+            convObj.participants.map(async (p: any) => {
+              if (p && typeof p === 'object') {
+                if (p.profileImage) {
+                  p.profileImage = await this.signImageUrl(p.profileImage);
+                }
+                if (p.avatar) {
+                  p.avatar = await this.signImageUrl(p.avatar);
+                }
+              }
+              return p;
+            }),
+          );
+        }
+        return convObj;
+      }),
+    );
+
+    const total = await this.conversationModel.countDocuments(query);
 
     return {
-      data: conversations,
+      data: conversationsWithSignedAvatars,
       total,
       page,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Toggle archive status of a conversation for current user
+   */
+  async toggleArchiveConversation(conversationId: string, userId: string) {
+    if (!Types.ObjectId.isValid(conversationId)) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    const conversation = await this.conversationModel.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    const userObjId = new Types.ObjectId(userId);
+    const isArchived = (conversation.archivedBy || []).some(
+      (id) => String(id) === String(userId),
+    );
+
+    if (isArchived) {
+      await this.conversationModel.findByIdAndUpdate(conversationId, {
+        $pull: { archivedBy: userObjId },
+      });
+    } else {
+      await this.conversationModel.findByIdAndUpdate(conversationId, {
+        $addToSet: { archivedBy: userObjId },
+      });
+    }
+
+    return {
+      success: true,
+      conversationId,
+      isArchived: !isArchived,
     };
   }
 
@@ -150,6 +212,14 @@ export class ChatService {
         const msgObj = msg.toObject();
         if (msgObj.image) {
           msgObj.image = await this.signImageUrl(msgObj.image);
+        }
+        if (msgObj.sender && typeof msgObj.sender === 'object') {
+          if (msgObj.sender.profileImage) {
+            msgObj.sender.profileImage = await this.signImageUrl(msgObj.sender.profileImage);
+          }
+          if (msgObj.sender.avatar) {
+            msgObj.sender.avatar = await this.signImageUrl(msgObj.sender.avatar);
+          }
         }
         return msgObj;
       }),
@@ -296,5 +366,33 @@ export class ChatService {
       .lean();
 
     return { success: true, message: populated };
+  }
+
+  /**
+   * Delete a conversation and all its messages
+   */
+  async deleteConversation(conversationId: string, userId: string) {
+    if (!Types.ObjectId.isValid(conversationId)) {
+      return { success: true, conversationId };
+    }
+
+    const conversation = await this.conversationModel.findById(conversationId);
+    if (!conversation) {
+      return { success: true, conversationId };
+    }
+
+    const currentUserIdStr = String(userId);
+    const isParticipant = conversation.participants.some(
+      (p) => String(p._id || p) === currentUserIdStr,
+    );
+
+    if (!isParticipant) {
+      throw new ForbiddenException('You cannot delete this conversation');
+    }
+
+    await this.messageModel.deleteMany({ conversation: conversationId });
+    await this.conversationModel.findByIdAndDelete(conversationId);
+
+    return { success: true, conversationId };
   }
 }

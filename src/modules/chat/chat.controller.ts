@@ -24,11 +24,24 @@ export class ChatController {
     @CurrentUser() user: User,
     @Query('page') page = 1,
     @Query('limit') limit = 20,
+    @Query('isArchived') isArchived?: string,
   ) {
     return this.chatService.getUserConversations(
       user._id.toString(),
       Number(page),
       Number(limit),
+      isArchived === 'true',
+    );
+  }
+
+  @Patch('conversations/:conversationId/archive')
+  async toggleArchiveConversation(
+    @CurrentUser() user: User,
+    @Param('conversationId') conversationId: string,
+  ) {
+    return this.chatService.toggleArchiveConversation(
+      conversationId,
+      user._id.toString(),
     );
   }
 
@@ -89,6 +102,17 @@ export class ChatController {
   ) {
     return this.chatService.deleteMessage(
       messageId,
+      user._id.toString(),
+    );
+  }
+
+  @Delete('conversations/:conversationId')
+  async deleteConversation(
+    @CurrentUser() user: User,
+    @Param('conversationId') conversationId: string,
+  ) {
+    return this.chatService.deleteConversation(
+      conversationId,
       user._id.toString(),
     );
   }
