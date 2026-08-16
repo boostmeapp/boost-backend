@@ -22,6 +22,9 @@ export class Message extends Document {
   @Prop({ type: Boolean, default: false })
   isRead: boolean;
 
+  @Prop({ type: Boolean, default: false })
+  isEdited: boolean;
+
   createdAt: Date;
   updatedAt: Date;
 }

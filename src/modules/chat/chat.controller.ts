@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Query,
+  Body,
   UseGuards,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
@@ -65,6 +66,19 @@ export class ChatController {
     return this.chatService.markAsRead(
       conversationId,
       user._id.toString(),
+    );
+  }
+
+  @Patch('messages/:messageId')
+  async editMessage(
+    @CurrentUser() user: User,
+    @Param('messageId') messageId: string,
+    @Body('text') text: string,
+  ) {
+    return this.chatService.editMessage(
+      messageId,
+      user._id.toString(),
+      text,
     );
   }
 

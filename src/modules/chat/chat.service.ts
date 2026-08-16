@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, Message, User } from '../../database/schemas';
@@ -245,9 +245,13 @@ export class ChatService {
    * Delete a message by ID
    */
   async deleteMessage(messageId: string, userId: string) {
+    if (!Types.ObjectId.isValid(messageId)) {
+      return { success: true, messageId };
+    }
+
     const message = await this.messageModel.findById(messageId);
     if (!message) {
-      throw new NotFoundException('Message not found');
+      return { success: true, messageId };
     }
 
     const currentUserIdStr = String(userId);
@@ -260,5 +264,37 @@ export class ChatService {
 
     await this.messageModel.findByIdAndDelete(messageId);
     return { success: true, messageId, conversationId: message.conversation.toString() };
+  }
+
+  /**
+   * Edit a message by ID
+   */
+  async editMessage(messageId: string, userId: string, text: string) {
+    if (!text || !text.trim()) {
+      throw new BadRequestException('Message text cannot be empty');
+    }
+    if (!Types.ObjectId.isValid(messageId)) {
+      throw new NotFoundException('Message not found');
+    }
+
+    const message = await this.messageModel.findById(messageId);
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+
+    if (String(message.sender) !== String(userId)) {
+      throw new ForbiddenException('You can only edit your own messages');
+    }
+
+    message.text = text.trim();
+    message.isEdited = true;
+    await message.save();
+
+    const populated = await this.messageModel
+      .findById(messageId)
+      .populate('sender', 'username firstName lastName name avatar profileImage')
+      .lean();
+
+    return { success: true, message: populated };
   }
 }
