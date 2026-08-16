@@ -213,12 +213,13 @@ export class ChatService {
         if (msgObj.image) {
           msgObj.image = await this.signImageUrl(msgObj.image);
         }
-        if (msgObj.sender && typeof msgObj.sender === 'object') {
-          if (msgObj.sender.profileImage) {
-            msgObj.sender.profileImage = await this.signImageUrl(msgObj.sender.profileImage);
+        const senderObj = msgObj.sender as any;
+        if (senderObj && typeof senderObj === 'object') {
+          if (senderObj.profileImage) {
+            senderObj.profileImage = await this.signImageUrl(senderObj.profileImage);
           }
-          if (msgObj.sender.avatar) {
-            msgObj.sender.avatar = await this.signImageUrl(msgObj.sender.avatar);
+          if (senderObj.avatar) {
+            senderObj.avatar = await this.signImageUrl(senderObj.avatar);
           }
         }
         return msgObj;
