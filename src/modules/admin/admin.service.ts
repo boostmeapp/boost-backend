@@ -22,6 +22,7 @@ import { TransactionService } from '../transaction/transaction.service';
 import { BoostService } from '../boost/boost.service';
 import { RewardService } from '../reward/reward.service';
 import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
+import { TransactionStatus } from '../../database/schemas/transaction/transaction.schema';
 import { ResolveReportDto, ResolveAction } from './dto/resolve-report.dto';
 
 // 24h review SLA per App Store Guideline 1.2
