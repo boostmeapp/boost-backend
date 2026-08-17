@@ -11,6 +11,8 @@ import { TransactionModule } from '../transaction/transaction.module';
 import { BoostModule } from '../boost/boost.module';
 import { RewardModule } from '../reward/reward.module';
 
+import { Boost, BoostSchema } from '../../database/schemas/boost/boost.schema';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -18,6 +20,7 @@ import { RewardModule } from '../reward/reward.module';
       { name: Video.name, schema: VideoSchema },
       { name: Report.name, schema: ReportSchema },
       { name: Comment.name, schema: CommentSchema },
+      { name: Boost.name, schema: BoostSchema },
     ]),
     WalletModule,
     TransactionModule,

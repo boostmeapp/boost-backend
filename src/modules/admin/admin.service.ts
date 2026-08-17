@@ -21,8 +21,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { BoostService } from '../boost/boost.service';
 import { RewardService } from '../reward/reward.service';
-import { TransactionStatus } from '../../database/schemas/transaction/transaction.schema';
-import { BoostStatus } from '../../database/schemas/boost/boost.schema';
+import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
 import { ResolveReportDto, ResolveAction } from './dto/resolve-report.dto';
 
 // 24h review SLA per App Store Guideline 1.2
@@ -35,6 +34,7 @@ export class AdminService {
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(Report.name) private reportModel: Model<Report>,
     @InjectModel(Comment.name) private commentModel: Model<Comment>,
+    @InjectModel(Boost.name) private boostModel: Model<Boost>,
     private walletService: WalletService,
     private transactionService: TransactionService,
     private boostService: BoostService,
@@ -326,9 +326,14 @@ export class AdminService {
 
   async getDashboardStats() {
     const slaCutoff = new Date(Date.now() - SLA_MS);
+    const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
+
     const [
       totalUsers,
       bannedUsers,
+      recentUsersCount,
+      runningBoosts,
+      runningBoostersList,
       totalVideos,
       removedVideos,
       totalComments,
@@ -337,6 +342,12 @@ export class AdminService {
     ] = await Promise.all([
       this.userModel.countDocuments({}),
       this.userModel.countDocuments({ isBanned: true }),
+      this.userModel.countDocuments({
+        updatedAt: { $gte: fifteenMinsAgo },
+        isBanned: false,
+      }),
+      this.boostModel.countDocuments({ status: BoostStatus.ACTIVE }),
+      this.boostModel.distinct('user', { status: BoostStatus.ACTIVE }),
       this.videoModel.countDocuments({}),
       this.videoModel.countDocuments({
         moderationStatus: ModerationStatus.REMOVED,
@@ -349,9 +360,16 @@ export class AdminService {
       }),
     ]);
 
+    // Active online users (recent active or fallback to active non-banned)
+    const onlineUsers = recentUsersCount > 0 ? recentUsersCount : Math.max(0, totalUsers - bannedUsers);
+    const runningBoostersCount = Array.isArray(runningBoostersList) ? runningBoostersList.length : 0;
+
     return {
       totalUsers,
       bannedUsers,
+      onlineUsers,
+      runningBoosts,
+      runningBoostersCount,
       totalVideos,
       removedVideos,
       totalComments,
