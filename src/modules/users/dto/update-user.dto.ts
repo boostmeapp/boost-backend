@@ -30,12 +30,14 @@ export class UpdateUserDto {
   @MaxLength(900)
   bio?: string;
 
+  // Holds a full public S3 URL since the upload service stopped presigning images.
   @IsOptional()
   @IsString()
+  @MaxLength(2048)
   profileImage?: string;
 
-    @IsOptional()
+  @IsOptional()
   @IsString()
+  @MaxLength(30)
   username?: string;
-
 }

@@ -31,6 +31,9 @@ export class UploadService {
   private readonly UPLOAD_URL_EXPIRATION = 3600; // 1 hour
   private readonly DOWNLOAD_URL_EXPIRATION = 86400; // 24 hours
 
+  // Keys carry a uuid, so objects are immutable and safe to cache for a year.
+  private readonly IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
   constructor(private configService: ConfigService) {
     const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
     const secretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
@@ -214,6 +217,7 @@ async generateProfileImageUploadUrl(
       Body: body,
       ContentLength: file.size,
       ContentType: file.mimetype,
+      CacheControl: this.IMMUTABLE_CACHE_CONTROL,
       Metadata: {
         userId,
         originalFileName: file.originalname,
@@ -225,13 +229,13 @@ async generateProfileImageUploadUrl(
       // Upload to S3
       await this.s3Client.send(command);
 
-      // Generate presigned download URL so mobile apps can access the image without 403 Forbidden
-      const { url: signedUrl } = await this.generateDownloadUrl(key);
+      // Images land in DB rows served to every viewer, so they must not be presigned.
+      const isImage = type !== UploadType.VIDEO;
+      const url = isImage
+        ? this.getPublicUrl(key)
+        : (await this.generateDownloadUrl(key)).url;
 
-      return {
-        key,
-        url: signedUrl,
-      };
+      return { key, url };
     } catch (error) {
       console.error('S3 Upload Error:', {
         message: error.message,

@@ -1,6 +1,6 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../../users/users.service';
 import { ENV } from '../../../config';
 
@@ -21,7 +21,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    const user = await this.usersService.findOne(payload.sub);
+    // findOne throws NotFoundException, which would surface as a 404 on every
+    // guarded route and hide the fact that the token itself is unusable.
+    const user = await this.usersService.findOne(payload.sub).catch((err) => {
+      if (err instanceof NotFoundException) return null;
+      throw err;
+    });
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');

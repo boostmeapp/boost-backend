@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsNumber, IsPositive, IsEnum, IsOptional, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsNumber, IsPositive, IsEnum, IsOptional, Min, MaxLength } from 'class-validator';
 
 export enum UploadType {
   VIDEO = 'video',
@@ -17,14 +18,18 @@ export class RequestUploadDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(255)
   contentType: string; // MIME type (e.g., video/mp4, image/jpeg)
 
+  @Type(() => Number)
   @IsNumber()
   @IsPositive()
   fileSize: number; // File size in bytes
 
-  @IsNumber()
-  @IsPositive()
+  // Matches CreateVideoDto: 0 means "unknown", not invalid.
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
   duration?: number; // Video duration in seconds (for videos only)
 }

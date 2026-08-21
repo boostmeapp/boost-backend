@@ -57,8 +57,12 @@ export class Video extends Document {
   @Prop({ type: [String], default: [], index: true })
   tags: string[]; // Array of tag names
 
-  @Prop({ required: true })
+  // No cover is a legitimate state; a cover that is secretly an mp4 is not.
+  @Prop({ default: '' })
   thumbnailUrl: string;
+
+  @Prop()
+  thumbnailKey?: string;
 
   @Prop({ required: true })
   duration: number; // Total duration in seconds

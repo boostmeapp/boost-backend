@@ -104,6 +104,40 @@ export class UploadController {
       key,
     };
   }
+  // ✅ VIDEO COVER THUMBNAILS — image mimetypes, keyed under thumbnails/
+  @Post('thumbnail')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB — matches MAX_IMAGE_SIZE
+      fileFilter: (_, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image files allowed'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadThumbnail(
+    @CurrentUser() user: User,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    const { url, key } = await this.uploadService.uploadFile(
+      user.id,
+      UploadType.THUMBNAIL,
+      file,
+    );
+
+    return { success: true, url, key };
+  }
+
   @Post('video')
 @UseInterceptors(
   FileInterceptor('file', {
