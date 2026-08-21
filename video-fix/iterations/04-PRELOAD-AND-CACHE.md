@@ -717,8 +717,23 @@ newboostraapp/src/app/video/[id].jsx                     (pass index; set active
 8. Backgrounding mid-download leaves no corrupt cache entry — the next launch cleans the
    `.part` file up.
 
-**Still outstanding:** playback still originates in Stockholm, and files are still
-non-faststart single-rendition MP4s, so a *cache miss* is as slow as it was. → Iteration 5.
+**Still outstanding:** files are still non-faststart single-rendition MP4s, so a *cache
+miss* is slower than it needs to be. → Iteration 5 Phase C.
+
+> **Updated 2026-08-21.** Two premises in this file are now stale, in your favour:
+>
+> 1. **Playback no longer originates in Stockholm.** CloudFront is configured
+>    (`AWS_CLOUDFRONT_DOMAIN=d37o15qkd7x4po.cloudfront.net`), so §2.1's `expo-av opens a
+>    connection to boostme-storage.s3.eu-north-1` and the "from Stockholm to a device on 4G"
+>    framing in §2.1 describe the pre-CDN world. A cache miss now terminates at an edge. The
+>    *reasoning* in this iteration is unaffected — a prefetched file on disk still beats an
+>    edge round-trip — but the baseline numbers you measure will be better than this file
+>    assumes. **Re-take the baselines before starting.**
+> 2. **[Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) now runs before this one**, and
+>    it caps a video at 100 MB with a typical clip at 7–20 MB. **Size the cache budget,
+>    `PRELOAD_COUNT` and the LRU eviction policy against those numbers, not against today's
+>    uncompressed originals** — that is the main reason for the reordering. A cache sized for
+>    uncompressed files holds ~4 videos; the same budget holds ~40 compressed ones.
 
 ---
 

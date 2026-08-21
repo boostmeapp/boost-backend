@@ -428,7 +428,9 @@ chunks: [
 Add `manifestUrl` to `FEED_PROJECTION` and emit it in `present()` alongside `videoUrl`.
 **Keep `videoUrl` populated** — it is the fallback and the swipe-back/disk-cache path.
 
-**CloudFront:** manifests and segments need different cache behaviours from the MP4s.
+**CloudFront:** the distribution already exists (Iteration 5 Phase A is done), so this is
+adding behaviours to it, not creating one. Manifests and segments need different cache
+behaviours from the MP4s.
 Add a behaviour for `*.m3u8` with a short TTL (they are VOD and immutable, so a long TTL is
 also defensible) and one for `*.ts` with the immutable policy. Confirm `Content-Type` is
 `application/vnd.apple.mpegurl` for `.m3u8` and `video/mp2t` for `.ts` — S3 guesses these

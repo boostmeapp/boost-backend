@@ -1,44 +1,46 @@
 # Iteration 5 — Delivery: CDN, Cache Headers, Faststart & Server-Side Covers
 
-**Scope:** backend + AWS infrastructure + a small frontend change (Phase D only).
-**Closes:** D-23 (backfill), D-43, D-44 (partially), D-45, D-46, D-47, D-49.
+**Scope:** backend + AWS infrastructure.
+**Closes:** D-23 (backfill), D-43, D-44 (partially), D-45, D-46.
+**Moved out:** D-47 and D-49 (and all of Phase D) now belong to
+[Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md).
 **Depends on:** Iteration 3 — `MediaUrlService` and server-authored `videoUrl` are the
 mechanism that makes Phase A a one-variable change instead of an app release.
-**Also depends on: the Render dev environment existing.** This is the most
-production-invasive iteration in the plan — see the gate below.
+~~**Also depends on: the Render dev environment existing.**~~ — **no longer true;
+[Constraint #9 was lifted 2026-08-21](00-OVERVIEW.md#constraint-9).** With Phase B and
+Phase C's backfill dropped, this iteration no longer mutates any existing data at all.
 
-> ### ⚠️ Gated by [Constraint #9](video-fix/iterations/00-OVERVIEW.md) — the app is live
+> ### ✅ Gate lifted 2026-08-21 — and half this iteration is gone
 >
-> Three things in this iteration mutate production and are **blocked until the dev
-> environment exists and each has been rehearsed there**:
+> This file used to open with a Constraint #9 gate blocking three production-mutating steps.
+> [Constraint #9 has been lifted](00-OVERVIEW.md#constraint-9): production data is being
+> deleted, and dev already runs against `boostme-storage-dev` with the CDN configured.
 >
-> | What | Phase | Why it is dangerous |
-> |---|---|---|
-> | `backfill-cache-control.js` | B | `CopyObjectCommand` rewrites **every existing object**. Get `ContentType` wrong and you turn videos into `application/octet-stream`, which some players refuse — see the warning in §5.B. |
-> | **OAC cutover — bucket goes private** | A | This is the one AWS change in the whole plan that is **not additive**. It removes public read. Every already-installed app build that composes an `s3.eu-north-1` URL directly stops playing the instant it lands. T-5.5 exists for exactly this. |
-> | `enqueue-optimize-backlog.js` | C | Transcodes and rewrites video rows in bulk, under Render's 5-attempt retry policy. |
+> The wipe does not just unblock those steps — it **removes the need for two of them**:
 >
-> Phase A's CloudFront distribution itself is safe to **create** on prod — a distribution
-> that nothing points at costs nothing and changes nothing. Creating it, and pointing
-> `AWS_CLOUDFRONT_DOMAIN` at it in a **dev** backend, is a legitimate way to rehearse the
-> whole phase. It is the *cutover* — flipping prod's env var, then locking the bucket — that
-> is gated.
+> | Was gated | Now |
+> |---|---|
+> | `backfill-cache-control.js` (Phase B) | ❌ **Dropped. Phase B is deleted from this iteration.** Its only purpose was objects uploaded before iteration 2 added `CacheControl`; after a wipe there are none. This also removes the plan's single riskiest script — the `MetadataDirective: REPLACE` `ContentType`-clobbering hazard is gone with it. |
+> | **OAC cutover — bucket goes private** | ✅ **Ungated.** Still sequence it *after* the wipe: with an empty feed there is nothing for a pre-iteration-3 build to fail to play. |
+> | `enqueue-optimize-backlog.js` (Phase C backfill) | ❌ **Dropped.** No backlog exists after a wipe. Phase C's per-upload `optimize` job stays. |
 >
-> Order of operations once the dev env exists: rehearse everything there → Phase A cutover
-> on prod with the bucket **still public** → soak 24 h (T-5.5 must pass on old builds) →
-> only then OAC.
+> **Do the data wipe before shipping [Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md)'s
+> pipeline.** Then every object in the bucket is one the new, compressing, correctly-headered
+> pipeline wrote — which is Iteration 7 §8's goal reached without a single migration.
 
-> This iteration has four phases. **Ship and verify them in order.** Each has its own
+> This iteration has three phases (D moved to Iteration 7). **Ship and verify them in order.** Each has its own
 > success criteria. Phase A alone is the single largest latency win in this entire plan for
 > any user outside Northern Europe, and it involves no code change at all beyond setting an
 > environment variable.
 
-| Phase | What | Code change | Risk |
-|---|---|---|---|
-| **A** | CloudFront in front of the bucket | env var only | Low |
-| **B** | `Cache-Control` backfill on existing objects | one script | Low |
-| **C** | Faststart remux + server-side cover extraction, as a queued job | new module + worker | Medium |
-| **D** | Direct-to-S3 upload (bypass Render) | backend + frontend | Medium |
+| Phase | What | Code change | Risk | Status |
+|---|---|---|---|---|
+| **A** | CloudFront in front of the bucket | env var only | Low | ✅ **Done** — `AWS_CLOUDFRONT_DOMAIN=d37o15qkd7x4po.cloudfront.net` is set in `.env`. Verify with T-5.1 … T-5.8. |
+| ~~**B**~~ | ~~`Cache-Control` backfill on existing objects~~ | — | — | ❌ **Dropped** — superseded by the data wipe (gate banner above). |
+| **C** | Faststart remux + server-side cover extraction, as a queued job | new module + worker | Medium | Remains. **Backfill wave dropped**; per-upload job only. |
+| ~~**D**~~ | ~~Direct-to-S3 upload (bypass Render)~~ | — | — | ➡ **Moved to [Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md)**. |
+
+**What is left of this iteration: verify Phase A, then build Phase C.**
 
 ---
 
@@ -64,11 +66,17 @@ Move the bytes closer to the viewer and make them usable sooner.
 ### 2.1 There is no CDN, and the placeholder proves it was intended (D-43, D-46)
 
 ```
-# boost-backend/.env
+# boost-backend/.env — as it was when this iteration was written
 AWS_REGION=eu-north-1
 AWS_S3_BUCKET=boostme-storage
 AWS_CLOUDFRONT_DOMAIN=REPLACE_WITH_CLOUDFRONT_DOMAIN
 ```
+
+> **Resolved.** `.env` now reads `AWS_S3_BUCKET=boostme-storage-dev` and
+> `AWS_CLOUDFRONT_DOMAIN=d37o15qkd7x4po.cloudfront.net` (verified 2026-08-21), and
+> `newboostraapp/src/utils/media.js` points its fallback at the same distribution. Phase A's
+> configuration step is **done**; what remains is running its test plan (T-5.1 … T-5.8),
+> especially **T-5.2 (range requests must return 206)**.
 
 `ENV.AWS_CLOUDFRONT_DOMAIN` exists as a getter
 ([env.ts:89-91](boost-backend/src/config/env.ts#L89-L91)) and — before iteration 3 — was
@@ -110,10 +118,18 @@ means an extra round-trip and a range request into the tail before the first fra
 a fixed, per-video, per-viewer penalty that `-movflags +faststart` removes permanently for
 the cost of one metadata rewrite — no re-encoding, no quality loss.
 
-`ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 1 })`
-([UploadScreen.jsx:57-60](newboostraapp/src/screens/home/screens/UploadScreen.jsx#L57-L60))
-means the source can be a 4K 60 fps original — iteration 2 capped this to `quality: 0.8`
-and 180 s, but that is a client-side hint, not a guarantee (D-49).
+`ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'] })`
+([UploadScreen.jsx:58-62](newboostraapp/src/screens/home/screens/UploadScreen.jsx#L58-L62))
+means the source can be a 4K 60 fps original (D-49).
+
+> **Correction (2026-08-21).** This paragraph previously claimed *"iteration 2 capped this to
+> `quality: 0.8` and 180 s, but that is a client-side hint, not a guarantee."* **That claim is
+> wrong, and the two options are worse than weak hints — they are inert.** Verified against
+> the installed `expo-image-picker@17.0.11` type definitions
+> (`build/ImagePicker.types.d.ts:403-415, 487-494`): `quality` is documented for **image**
+> compression only, and `videoMaxDuration` is *"Maximum duration, in seconds, for video
+> **recording**"* — it does not bound a library pick. **There is no cap of any kind on the
+> selected video today.** See [Iteration 7 §0 and D-52](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md).
 
 ### 2.4 500 MB uploads traverse the API instance (D-47)
 
@@ -204,7 +220,7 @@ CloudFront hostname permanently. `MediaUrlService` needs no change.
 | T-5.4 | **Latency from a distant region** | From a non-EU host (a cheap VM, or a VPN): `curl -w '%{time_starttransfer}' -o /dev/null -s` against the S3 URL and then the CF URL, 5 runs each | CF median at least **50 %** lower than S3 on a warm edge. |
 | T-5.5 | **Old app build still works** | Install the pre-iteration-3 build, scroll the feed | Plays. (It composes S3 URLs itself and the bucket is still public — this is the compatibility guarantee.) |
 | T-5.6 | **New app build plays from the edge** | Current build; proxy trace while scrolling 20 items | Every media request goes to the CloudFront host. Zero to S3. |
-| T-5.7 | **Cache hit ratio** | CloudFront console, after ~30 min of normal use | Non-trivial hit ratio. Note it; Phase B should raise it. |
+| T-5.7 | **Cache hit ratio** | CloudFront console, after ~30 min of normal use | Non-trivial hit ratio. (Phase B is dropped, so this is the figure — every object now carries the immutable header at write time.) |
 | T-5.8 | **Re-watch is an edge hit** | Watch a video, clear the app's disk cache, watch again, check `x-cache` in the proxy | `Hit from cloudfront`. |
 
 ### 11.A Success criteria — Phase A
@@ -217,7 +233,33 @@ CloudFront hostname permanently. `MediaUrlService` needs no change.
 
 ---
 
-## Phase B — Cache-Control backfill
+## ~~Phase B — Cache-Control backfill~~ ❌ DROPPED
+
+> ### Phase B is removed from the plan (2026-08-21)
+>
+> **Do not write `backfill-cache-control.js`.** Its only purpose was to set `Cache-Control`
+> on objects uploaded **before** iteration 2 added the header to `PutObjectCommand`. With
+> production data being deleted ([Constraint #9 lifted](00-OVERVIEW.md#constraint-9)), those
+> objects cease to exist, and every object written afterwards already carries
+> `public, max-age=31536000, immutable` from
+> [upload.service.ts:35](boost-backend/src/modules/upload/upload.service.ts#L35).
+>
+> This is a genuine reduction in risk, not just in work: the script's
+> `MetadataDirective: 'REPLACE'` semantics silently discard `ContentType` unless it is
+> re-supplied per object, and getting that wrong turns every video into
+> `application/octet-stream`. That hazard is now gone from the plan entirely, along with
+> tests T-5.9 … T-5.14 and success criteria §11.B.
+>
+> **One thing to carry forward:** after the wipe, spot-check a freshly uploaded object with
+> `aws s3api head-object` to confirm `CacheControl` **and** `ContentType` are both correct at
+> the source. That is one command, and it replaces the whole phase.
+>
+> D-23 is therefore closed by deletion rather than by backfill.
+
+<details>
+<summary>Original Phase B (retained for history — do not implement)</summary>
+
+
 
 > **🚫 Dev environment only until rehearsed.** This script rewrites the metadata of every
 > object in the production bucket. Write it now; run it against a dev bucket (or a
@@ -320,6 +362,11 @@ aws cloudfront create-invalidation --distribution-id $DIST --paths '/*'
 - [ ] Edge serves the immutable header (T-5.12).
 - [ ] Script idempotent (T-5.14).
 - [ ] CloudFront cache hit ratio measurably higher than the Phase A figure (T-5.7) after 24 h.
+
+---
+
+
+</details>
 
 ---
 
@@ -555,13 +602,15 @@ and add `processedVideoKey` to `FEED_PROJECTION`. Same in `VideoService.findOne`
 Start with (2) if provisioning a second service is a blocker, but write the processor so
 moving to (1) is a deployment change only.
 
-**Backfill** — `boost-backend/scripts/enqueue-optimize-backlog.js`: iterate videos where
-`optimizationStatus` is missing or `pending`, enqueue in batches with a delay between them
-so the worker is not saturated. Run it in waves and watch the worker.
+**~~Backfill~~ — ❌ dropped (2026-08-21).** `scripts/enqueue-optimize-backlog.js` is no
+longer needed: with production data deleted there is no backlog of un-optimized videos and
+no long tail of coverless rows to repair. **Do not write it.** T-5.27 (backfill wave) and
+the "backfill cost" risk row below are struck with it.
 
-Prioritise videos with **no cover** first (`thumbnailUrl: ''` — the rows iteration 2's
-repair script blanked). That converts the visible long tail of gradient placeholders into
-real covers, which is the most user-visible part of this whole phase.
+Every video published *after* the wipe is enqueued at creation by the `create` hook above,
+so `optimizationStatus` converges without any bulk operation. If a backlog ever does
+accumulate — e.g. a long worker outage — write the enqueue script *then*, against a known
+small set, rather than carrying it as standing plan.
 
 ### 9.C Risks — Phase C
 
@@ -574,7 +623,7 @@ real covers, which is the most user-visible part of this whole phase.
 | **A transcode makes a video look worse** | Medium | The gate only transcodes sources above 1080p / 6 Mbps / non-h264. `crf 24 / veryfast` is conservative. Eyeball 5 transcoded outputs side by side against their originals before running the backfill (T-5.19). |
 | **The cover overwrites a creator's chosen cover** | Medium | The `if (!video.thumbnailKey && !video.thumbnailUrl)` guard. Test it explicitly (T-5.20). |
 | **Redis outage stops all optimization** | Medium | Additive design means playback is unaffected. Alert on `optimizationStatus: 'pending'` count growing. |
-| **Backfill cost.** Egress from S3 to the worker + storage for a second copy of every video | Medium | The worker is in the same region as the bucket, so egress is free/cheap; storage roughly doubles for optimized renditions. Add an S3 lifecycle rule moving `videos/*/optimized/` older than N days to Infrequent Access if that matters. Do **not** delete originals. |
+| ~~**Backfill cost.**~~ | — | ❌ **Struck** — no backfill wave (see above). Ongoing storage still roughly doubles for optimized renditions; an S3 lifecycle rule moving `videos/*/optimized/` older than N days to Infrequent Access remains optional. Note that after Iteration 7, the "original" is already a compressed ≤100 MB file, so the second copy is far cheaper than this row assumed. |
 
 ### 10.C Test plan — Phase C
 
@@ -592,7 +641,7 @@ real covers, which is the most user-visible part of this whole phase.
 | T-5.24 | **Temp files cleaned** — `df` / `ls /tmp` on the worker after 10 jobs | No residue. |
 | T-5.25 | **Feed prefers the optimized rendition** — `curl "$API/feed/global"` after a job completes | That item's `videoUrl` path contains `/optimized/`. |
 | T-5.26 | **Start-latency improvement** — 3G profile, cache cleared, 10 optimized vs 10 un-optimized videos, measure mount→first-frame | Optimized median measurably lower. Record both numbers. |
-| T-5.27 | **Backfill wave** — enqueue 50 coverless videos, watch worker metrics | All complete. CPU/memory stay within instance limits. No API latency regression during the wave. |
+| ~~T-5.27~~ | ~~**Backfill wave**~~ | ❌ **Struck** — no backfill (2026-08-21). |
 
 ### 11.C Success criteria — Phase C
 
@@ -602,25 +651,43 @@ real covers, which is the most user-visible part of this whole phase.
 - [ ] **A worker outage does not hide or break a single video** (T-5.23). This is the design invariant; if it fails, the additive design was compromised somewhere.
 - [ ] A corrupt input results in `failed` status and a **still-playable** video (T-5.22).
 - [ ] Creator-chosen covers are never overwritten (T-5.20).
-- [ ] Coverless videos gain real covers (T-5.21), and the backfill has reduced
-      `db.videos.countDocuments({ $or: [{thumbnailUrl: ''}, {thumbnailUrl: null}] })` to near zero.
+- [ ] Coverless videos gain real covers (T-5.21). ~~and the backfill has reduced…~~ — after
+      the wipe, `db.videos.countDocuments({ $or: [{thumbnailUrl: ''}, {thumbnailUrl: null}] })`
+      should stay near zero on its own, because every new upload is covered at publish time.
 - [ ] Measurable mount→first-frame improvement on optimized vs un-optimized (T-5.26).
 - [ ] No temp-file residue after 10 jobs (T-5.24).
-- [ ] No API p95 latency regression during a 50-video backfill wave (T-5.27).
+- [ ] ~~No API p95 latency regression during a 50-video backfill wave (T-5.27).~~ ❌ struck — no backfill.
 
 ---
 
-## Phase D — Direct-to-S3 upload (optional, separable)
+## Phase D — Direct-to-S3 upload (~~optional, separable~~ **MOVED**)
 
-### 5.D Exact changes
+> ### ➡️ Phase D has moved to [Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md)
+>
+> **Superseded on 2026-08-21.** Direct-to-S3 upload is no longer "optional, separable" — it
+> is mandatory, and it is specified in full in
+> [07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md §10](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md),
+> together with the client-side compression that makes it worth doing. **Implement from
+> Iteration 7, not from this section.**
+>
+> The sketch below is **retained for history and is known to be wrong in two ways.** Both
+> defects are corrected in Iteration 7 §10.4:
+>
+> | # | Defect in the sketch below | Correction |
+> |---|---|---|
+> | 1 | It signs a `PutObjectCommand` that includes `CacheControl`, while the frontend step sends only `Content-Type`. Any header in the signed command joins `SignedHeaders` and **must** be sent back byte-for-byte — so as written, the very first request returns **403 SignatureDoesNotMatch**. | Send both headers from the client, or move to presigned POST where they are ordinary form fields. |
+> | 2 | **A presigned PUT URL does not bound the request body.** `validateFileSize(fileSize)` validates a number *the client chose to send*; a client that declares 10 MB and PUTs 5 GB succeeds, and the bill is real. | Use **presigned POST** (`@aws-sdk/s3-presigned-post`) with `Conditions: [['content-length-range', 1, MAX]]`, so **S3 itself** rejects an oversized body with `400 EntityTooLarge`. This is the only server-authoritative size gate available on a direct upload. |
+
+### 5.D Exact changes — ⚠️ SUPERSEDED, DO NOT IMPLEMENT FROM THIS
 
 **Backend** — a presign route, modelled on the existing
 `generateProfileImageUploadUrl` ([upload.service.ts:97-130](boost-backend/src/modules/upload/upload.service.ts#L97-L130)):
 
 ```ts
 // upload.service.ts
+// ⚠️ WRONG — see corrections 1 and 2 above. Use Iteration 7 §10.3/§10.4 instead.
 async generateVideoUploadUrl(userId: string, fileName: string, fileSize: number) {
-  this.validateFileSize(UploadType.VIDEO, fileSize);
+  this.validateFileSize(UploadType.VIDEO, fileSize);   // ← client-supplied number, not a gate
   const key = this.generateS3Key(userId, UploadType.VIDEO, fileName);
 
   const uploadUrl = await getSignedUrl(
@@ -629,7 +696,7 @@ async generateVideoUploadUrl(userId: string, fileName: string, fileSize: number)
       Bucket: this.bucketName,
       Key: key,
       ContentType: 'video/mp4',
-      CacheControl: this.IMMUTABLE_CACHE_CONTROL,
+      CacheControl: this.IMMUTABLE_CACHE_CONTROL,      // ← becomes a REQUIRED signed header
     }),
     { expiresIn: this.UPLOAD_URL_EXPIRATION },   // 3600
   );
@@ -652,13 +719,18 @@ remember `forbidNonWhitelisted`.
 **Frontend** — `uploadService.uploadVideoDirect(fileUri, fileSize, onProgress)`:
 
 1. `POST /upload/video/presign` → `{ uploadUrl, key }`.
-2. `createUploadTask(uploadUrl, uri, { httpMethod: 'PUT', uploadType: FileSystemUploadType.BINARY_CONTENT, headers: { 'Content-Type': 'video/mp4' } }, onProgress)`.
+2. `createUploadTask(uploadUrl, uri, { httpMethod: 'PUT', uploadType: FileSystemUploadType.BINARY_CONTENT, headers: { 'Content-Type': 'video/mp4' } }, onProgress)`
+   — ⚠️ **missing `Cache-Control`; this is the 403 in correction 1.**
 3. Return `{ key }`. `UploadScreen` passes it as `rawVideoKey` exactly as today.
 
-**Keep `POST /upload/video` alive** for one release so older builds keep working, then
-delete it.
+**Keep `POST /upload/video` alive** for ~~one release~~ **two releases** so older builds keep
+working, then delete it. (Iteration 7 §13.2.)
 
-### 10.D / 11.D Test plan and criteria — Phase D
+### 10.D / 11.D Test plan and criteria — Phase D  ⚠️ SUPERSEDED
+
+> Replaced by [Iteration 7 §15](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) (T-7.13 … T-7.23).
+> Note that T-5.28 below tests a **PUT**, which correction 1 above shows would 403 as
+> specified. Retained for history only.
 
 | # | Test | Pass |
 |---|---|---|
@@ -681,12 +753,12 @@ delete it.
 2. A re-watch after the app's disk cache is cleared is an edge hit, not an S3 transfer.
 3. Optimized videos start decoding from their first bytes — no tail range request first.
 4. Oversized 4K sources are normalised to ≤1080p, so a swipe does not pull 80 MB.
-5. Videos that had no cover — including the ones iteration 2 had to blank — now have one,
-   generated server-side.
+5. Videos that had no cover now have one, generated server-side. (The iteration-2-blanked
+   rows this used to refer to are removed by the data wipe.)
 6. `processedVideoKey` and `optimizationStatus` describe something real; `processingStatus`
    remains a constant and that is now a deliberate, documented choice rather than an
    accident.
-7. (Phase D) Uploads go phone → S3 directly.
+7. ~~(Phase D) Uploads go phone → S3 directly.~~ → delivered by [Iteration 7](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md).
 8. A worker or Redis outage changes nothing a user can see.
 
 **Still outstanding:** single-rendition delivery. A viewer on a poor connection gets the
@@ -697,16 +769,16 @@ same file as one on wifi; there is no adaptive ladder. → Iteration 6.
 ## 12. Rollout order (summary)
 
 ```
-A1  Create the CloudFront distribution                        (no code)
-A2  Set AWS_CLOUDFRONT_DOMAIN in Render, restart              (env only)
-A3  Verify T-5.1 … T-5.8                                      ← gate
-B1  backfill-cache-control.js --dry, then --prefix=thumbnails/
-B2  Spot-check ContentType, then run for videos/
-B3  CloudFront invalidation, verify T-5.9 … T-5.14            ← gate
+A1  Create the CloudFront distribution                        ✅ DONE
+A2  Set AWS_CLOUDFRONT_DOMAIN in Render, restart              ✅ DONE (.env verified)
+A3  Verify T-5.1 … T-5.8                                      ← gate; T-5.2 (206) is non-negotiable
+B   ❌ DROPPED — no Cache-Control backfill; the data wipe supersedes it
 C0  Verify ffmpeg-static runs in the container (T-5.15)        ← gate; do not skip
 C1  Provision Redis, set the five env vars
 C2  Ship the video-processing module, worker not yet enabled
 C3  Enable the worker; publish one test video; verify T-5.17 … T-5.25
-C4  Backfill in waves, coverless videos first, monitoring the worker
-D   Optional: presigned direct upload
+C4  ❌ DROPPED — no backfill wave; nothing to backfill after the wipe
+D   ➡ MOVED to Iteration 7, which is scheduled BEFORE this iteration
+
+Prerequisite for the whole file: do the production data wipe first, then run A3.
 ```

@@ -13,14 +13,20 @@ doc, this document is the one that was checked against code most recently.
 Six iteration files, ordered so that each one is independently shippable, independently
 testable, and does not depend on any later iteration.
 
-| # | File | Scope | Risk | Ship independently? |
+| # | File | Scope | Risk | Status |
 |---|---|---|---|---|
-| 1 | [01-PLAYBACK-AUTHORITY.md](video-fix/01-PLAYBACK-AUTHORITY.md) | Frontend only | Low | Yes |
-| 2 | [02-POSTER-PIPELINE.md](video-fix/02-POSTER-PIPELINE.md) | Frontend + Backend | Low–Medium | Yes |
-| 3 | [03-FEED-API-CONTRACT.md](video-fix/03-FEED-API-CONTRACT.md) | Backend + Frontend | Medium | Yes (backend first) |
-| 4 | [04-PRELOAD-AND-CACHE.md](video-fix/04-PRELOAD-AND-CACHE.md) | Frontend only | Medium | Yes |
-| 5 | [05-DELIVERY-CDN-FASTSTART.md](video-fix/05-DELIVERY-CDN-FASTSTART.md) | Backend + AWS infra | Medium–High | Yes |
-| 6 | [06-PLAYER-ENGINE-MIGRATION.md](video-fix/06-PLAYER-ENGINE-MIGRATION.md) | Frontend + Backend | High | Last |
+| 1 | [01-PLAYBACK-AUTHORITY.md](01-PLAYBACK-AUTHORITY.md) | Frontend only | Low | ✅ Shipped |
+| 2 | [02-POSTER-PIPELINE.md](02-POSTER-PIPELINE.md) | Frontend + Backend | Low–Medium | ✅ Shipped |
+| 3 | [03-FEED-API-CONTRACT.md](03-FEED-API-CONTRACT.md) | Backend + Frontend | Medium | ✅ Shipped |
+| **7** | [**07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md**](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) | Mobile + Backend | Medium | ⬅ **Next — runs before 4** |
+| 4 | [04-PRELOAD-AND-CACHE.md](04-PRELOAD-AND-CACHE.md) | Frontend only | Medium | Then |
+| 5 | [05-DELIVERY-CDN-FASTSTART.md](05-DELIVERY-CDN-FASTSTART.md) | Backend + AWS infra | Medium | Phase A ✅ done · Phase B **dropped** · Phase C remains · Phase D → moved to 7 |
+| 6 | [06-PLAYER-ENGINE-MIGRATION.md](06-PLAYER-ENGINE-MIGRATION.md) | Frontend + Backend | High | Last |
+
+> **Iteration 7 was added on 2026-08-21** and is numbered by identity, not by order. It runs
+> **before** iteration 4 — see [its §14](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) for the
+> dependency argument. Sizing iteration 4's disk cache is not sensible until iteration 7 has
+> bounded how large a video file can be.
 
 **Do not reorder.** Iterations 1 and 2 remove the noise that makes iterations 3–6
 impossible to measure. Iteration 3 makes the backend the single source of truth for media
@@ -174,53 +180,65 @@ are repeated in the iterations that they affect, but read them once here.
    returns `{ data, pagination }` and `{ data, nextCursor }`. Only the `FeedService` shape
    is consumed by the app. Iteration 3 standardises on one and deletes the dead ones.
 
-9. **⚠️ THE APP IS LIVE AND THE S3 BUCKET IS PRODUCTION.** <a id="constraint-9"></a>
-   This constrains every iteration, so read it before you touch anything.
+9. **~~THE APP IS LIVE AND THE S3 BUCKET IS PRODUCTION.~~ — LIFTED 2026-08-21.** <a id="constraint-9"></a>
 
-   - Local development currently runs against a **private Mongo** but the **production S3
-     bucket** (`boostme-storage`). Test uploads therefore land in prod. They are additive
-     and harmless, but be aware of it.
-   - **No data-mutating script runs against production Mongo or production S3.** That means
-     iteration 2's `repair-thumbnails.js` (§5.5), iteration 3's out-of-band `createIndex`
-     (T-3.0), and iteration 5's `backfill-cache-control.js` and
-     `enqueue-optimize-backlog.js` are all **written now and run later**.
-   - No `aws s3 cp --recursive`, no `aws s3 sync`, no `--metadata-directive REPLACE`, no
-     object deletion, no `updateMany` against prod.
-   - **A separate development environment on Render — with its own Mongo — is a
-     prerequisite** for all of the above. Each gated step runs there first, is verified
-     idempotent there, and only then becomes a separately-decided production release step
-     with a fresh `mongodump` in hand.
+   > **This constraint no longer applies.** The owner has decided that **production data
+   > will be deleted**, and local/dev work now runs against a dedicated dev bucket
+   > (`AWS_S3_BUCKET=boostme-storage-dev`) with the CDN already configured
+   > (`AWS_CLOUDFRONT_DOMAIN=d37o15qkd7x4po.cloudfront.net`) — both verified in
+   > `boost-backend/.env`. The original text is kept below, struck, because iterations 2 and
+   > 3 were designed under it and their design choices only make sense in that light.
 
-   **What is *not* blocked.** Code deploys, DTO/schema changes, and app builds are all
-   reversible by redeploying — ship them normally. **Additive permission changes** are also
-   fine (iteration 2 §5.0: one bucket-policy statement, one IAM grant, one env var check);
-   they create no data and are reversible. The rule is about *mutating existing rows and
-   existing objects*, not about shipping.
+   **What changes as a result — this is the important part.** A planned wipe does not merely
+   *ungate* the repair and backfill work; it **supersedes** most of it. There is no point
+   repairing rows or rewriting object metadata that is about to be deleted. See the table in
+   the next section: four of the six deferred steps are now **dropped, not deferred**.
 
-   **Design consequence.** Because the repairs lag the code, every iteration must be correct
-   against **unrepaired** production data. Iteration 2 already is — `toPosterUrl` rejects
-   poisoned `thumbnailUrl` values client-side, so the fix does not depend on the script
-   having run. Hold later iterations to the same standard.
+   **What is still true regardless of the wipe:**
+
+   - The **OAC cutover** (bucket goes private) still breaks any installed app build that
+     composes an `s3.{region}` URL itself. Iteration 3 moved URL composition server-side, so
+     *current* builds are fine — and after a data wipe the feed is empty anyway, so there is
+     nothing for an old build to fail to play. Cutover is therefore safe, but sequence it
+     after the wipe, not before.
+   - **Do the wipe before, not after, shipping the new upload pipeline.** Objects written by
+     the old pipeline (uncompressed originals, no `Cache-Control` on pre-iteration-2 uploads)
+     are exactly what the wipe is for. Wipe first and the bucket contains only correctly
+     written objects from day one — which is Iteration 7's §8 goal achieved for free.
+
+   ~~*Original text:*~~
+
+   - ~~Local development currently runs against a **private Mongo** but the **production S3
+     bucket** (`boostme-storage`). Test uploads therefore land in prod.~~
+   - ~~**No data-mutating script runs against production Mongo or production S3.**~~
+   - ~~No `aws s3 cp --recursive`, no `aws s3 sync`, no `--metadata-directive REPLACE`, no
+     object deletion, no `updateMany` against prod.~~
+   - ~~**A separate development environment on Render — with its own Mongo — is a
+     prerequisite** for all of the above.~~
+   - ~~**Design consequence.** Because the repairs lag the code, every iteration must be
+     correct against **unrepaired** production data.~~ **← no longer binding.** Iterations 4–7
+     may assume a clean bucket and clean collections. Iteration 2's client-side `toPosterUrl`
+     guard stays anyway: it is cheap, and it protects against a wipe that is delayed or partial.
 
 ---
 
-## Deferred production steps — one place to track them
+## Deferred production steps — mostly superseded by the planned data wipe
 
-Everything gated by Constraint #9. Each is **written as part of its iteration** and **run
-later**, in the Render dev environment first.
+**Updated 2026-08-21.** With production data being deleted, most of this table is no longer
+work that needs doing. Re-triaged:
 
-| Step | From | Mutates | Blocked until |
+| Step | From | Status now | Why |
 |---|---|---|---|
-| `scripts/repair-thumbnails.js` | Iter 2 §5.5 | `videos.thumbnailUrl`, `videos.thumbnailKey` | Dev env exists |
-| Same logic for `users.profileImage` | Iter 2 §5.5 | `users.profileImage` | Dev env exists |
-| `createIndex(..., {background:true})` ×2 | Iter 3 T-3.0 | Prod Mongo index build | Dev env exists |
-| `scripts/backfill-cache-control.js` | Iter 5 Phase B | Every existing S3 object's metadata | Dev env exists |
-| CloudFront + OAC cutover (bucket goes private) | Iter 5 Phase A | Bucket policy — **not** additive | Dev env exists |
-| `scripts/enqueue-optimize-backlog.js` | Iter 5 §Backfill | Transcodes + writes video rows | Dev env exists |
+| `scripts/repair-thumbnails.js` | Iter 2 §5.5 | ❌ **Drop** | It repairs `thumbnailUrl` rows that a wipe removes. The client-side `toPosterUrl` guard already handles the poisoned values in the meantime. |
+| Same logic for `users.profileImage` | Iter 2 §5.5 | ❌ **Drop** | Same reasoning. |
+| `createIndex(..., {background:true})` ×2 | Iter 3 T-3.0 | ✅ **Ungated — just run it** | Index builds on an empty (or soon-empty) collection are instant and risk-free. `autoIndex: true` is set on the schema, so this may already be satisfied; verify rather than assume. |
+| `scripts/backfill-cache-control.js` | Iter 5 Phase B | ❌ **Drop — do not write it** | Its entire purpose is objects uploaded before iteration 2 added `CacheControl`. After a wipe there are none. This removes the riskiest script in the plan (the `MetadataDirective: REPLACE` / `ContentType`-clobbering hazard) along with **all of Iteration 5 Phase B**. |
+| CloudFront + OAC cutover | Iter 5 Phase A | ✅ **Ungated** | Distribution already exists and is wired up. Sequence the OAC step *after* the wipe. |
+| `scripts/enqueue-optimize-backlog.js` | Iter 5 §Backfill | ❌ **Drop** | There is no backlog after a wipe. Iteration 5 Phase C's `optimize` job still runs **on new uploads**; only the bulk backfill goes away. |
+| Orphan-object lifecycle rule | Iter 7 §11.3 | ✅ **Ungated** | Was gated only because it deletes objects. Create it whenever convenient. |
 
-Note the OAC cutover is the one AWS change in this plan that is **not** additive — it
-removes public read and replaces it with an origin-access-only policy. Unlike iteration 2
-§5.0, a mistake there takes the live app down. It gets the same gate.
+**Net effect: Iteration 5 loses Phase B entirely and Phase C loses its backfill wave.** What
+remains of Iteration 5 is Phase A (done) and Phase C's per-upload optimize job.
 
 ---
 
