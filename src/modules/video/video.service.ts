@@ -12,6 +12,7 @@ import { CreateVideoDto, UpdateVideoDto } from './dto';
 import { LikesService } from '../likes/likes.service';
 import { FollowsService } from '../follows/follows.service';
 import { scanText } from '../../common/utils/content-filter.util';
+import { MediaUrlService } from '../../common/services/media-url.service';
 
 
 @Injectable()
@@ -21,6 +22,7 @@ export class VideoService {
     @InjectModel(Boost.name) private boostModel: Model<Boost>,
     private readonly likesService: LikesService,
     private readonly followsService: FollowsService,
+    private readonly mediaUrl: MediaUrlService,
   ) { }
 
 
@@ -64,158 +66,7 @@ export class VideoService {
 
 
 
-  async getFollowingFeed(
-    currentUserId: string,
-    page: number = 1,
-    limit: number = 20,
-  ) {
-    // 1️⃣ Get following user IDs
-    const followingIds = await this.followsService.getFollowingIds(currentUserId);
-
-    console.log('FOLLOWING IDS:', followingIds);
-    // 2️⃣ If user follows nobody → return empty but CONSISTENT response
-    if (!followingIds || followingIds.length === 0) {
-      return {
-        data: [],
-        pagination: {
-          total: 0,
-          page,
-          limit,
-          totalPages: 0,
-          hasNextPage: false,
-        },
-      };
-    }
-
-    const skip = (page - 1) * limit;
-
-    // 3️⃣ Fetch videos + count
-    const [videos, total] = await Promise.all([
-      this.videoModel
-        .find({
-          user: { $in: followingIds },
-          processingStatus: VideoProcessingStatus.READY,
-          moderationStatus: { $ne: ModerationStatus.REMOVED },
-        })
-        .populate('user', 'firstName lastName email')
-        .sort({
-          isBoosted: -1,
-          boostScore: -1,
-          createdAt: -1,
-        })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-
-      this.videoModel.countDocuments({
-        user: { $in: followingIds },
-        processingStatus: VideoProcessingStatus.READY,
-        moderationStatus: { $ne: ModerationStatus.REMOVED },
-      }),
-    ]);
-
-    // 4️⃣ Return FINAL response (frontend compatible)
-    return {
-      data: videos,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasNextPage: page * limit < total,
-      },
-    };
-  }
-
-  async getFollowingFeedCursor(
-    currentUserId: string,
-    limit: number = 20,
-    cursor?: string,
-  ) {
-    const followingIds = await this.followsService.getFollowingIds(currentUserId);
-
-    if (followingIds.length === 0) {
-      return {
-        data: [],
-        nextCursor: null,
-      };
-    }
-
-    const query: any = {
-      user: { $in: followingIds },
-      processingStatus: VideoProcessingStatus.READY,
-      moderationStatus: { $ne: ModerationStatus.REMOVED },
-    };
-
-    // Cursor condition
-    // Cursor condition (STABLE + SAFE)
-    if (cursor) {
-      const cursorVideo = await this.videoModel
-        .findById(cursor)
-        .select('_id createdAt isBoosted boostScore')
-        .lean();
-
-      if (cursorVideo) {
-        query.$or = [
-          // Same boost state, lower score
-          {
-            isBoosted: cursorVideo.isBoosted,
-            boostScore: { $lt: cursorVideo.boostScore },
-          },
-
-          // Same boost + score, older date
-          {
-            isBoosted: cursorVideo.isBoosted,
-            boostScore: cursorVideo.boostScore,
-            createdAt: { $lt: cursorVideo.createdAt },
-          },
-
-          // Same boost + score + date, lower _id
-          {
-            isBoosted: cursorVideo.isBoosted,
-            boostScore: cursorVideo.boostScore,
-            createdAt: cursorVideo.createdAt,
-            _id: { $lt: cursorVideo._id },
-          },
-        ];
-
-      }
-    }
-
-    const videos = await this.videoModel
-      .find(query)
-      .populate('user', 'firstName lastName email')
-      .sort({
-        isBoosted: -1,
-        boostScore: -1,
-        createdAt: -1,
-        _id: -1,
-      })
-      .limit(limit + 1) // fetch one extra
-      .lean();
-
-    const hasNext = videos.length > limit;
-    if (hasNext) videos.pop();
-
-    // ✅ ADD HERE (LIKE STATUS)
-    const videoIds = videos.map(v => v._id.toString());
-    const likedMap = await this.likesService.hasUserLikedVideos(
-      currentUserId,
-      videoIds,
-    );
-
-    const enrichedVideos = videos.map(video => ({
-      ...video,
-      hasLiked: likedMap.get(video._id.toString()) || false,
-    }));
-
-    return {
-      data: enrichedVideos,
-      nextCursor: hasNext ? enrichedVideos[enrichedVideos.length - 1]._id : null,
-    };
-
-  }
-
+  // Removed: getFollowingFeed / getFollowingFeedCursor — superseded by FeedService, called by nothing.
 
   async findAll(
     page: number = 1,
@@ -324,6 +175,11 @@ export class VideoService {
 
     return {
       ...video,
+      // Absolute and playable, matching the feed contract.
+      videoUrl: this.mediaUrl.toUrl(video.rawVideoKey),
+      thumbnailUrl: this.mediaUrl.toUrl(
+        (video as any).thumbnailKey || video.thumbnailUrl,
+      ),
       hasLiked,
       isFollowing,
     };

@@ -177,6 +177,16 @@ VideoSchema.index({ user: 1, processingStatus: 1, createdAt: -1 }); // User's vi
 VideoSchema.index({ viewCount: -1, createdAt: -1 }); // Trending videos
 VideoSchema.index({ hasRewardPool: 1, isBoosted: 1 }); // Reward-enabled videos
 VideoSchema.index({ boostEndDate: 1, isBoosted: 1 }); // Expiring boosts cleanup
+// Keyset pagination for the global feed: status equality, then a total order on (createdAt, _id).
+VideoSchema.index(
+  { processingStatus: 1, moderationStatus: 1, createdAt: -1, _id: -1 },
+  { name: 'FeedGlobalKeyset' },
+);
+// Same, scoped to a set of followed creators.
+VideoSchema.index(
+  { user: 1, processingStatus: 1, moderationStatus: 1, createdAt: -1, _id: -1 },
+  { name: 'FeedFollowingKeyset' },
+);
 // 🔍 TEXT SEARCH INDEX (FOR SEARCH SYSTEM)
 VideoSchema.index(
   {

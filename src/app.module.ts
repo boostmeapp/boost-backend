@@ -23,6 +23,7 @@ import { StripeConnectModule } from './modules/stripe-connect/stripe-connect.mod
 import { PayoutModule } from './modules/payout/payout.module';
 import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './common/guards';
+import { CommonServicesModule } from './common/services/common-services.module';
 import { AllExceptionsFilter } from './common/filters';
 import { ENV } from './config';
 import { CommentsModule } from './modules/comments/comments.module';
@@ -90,6 +91,7 @@ ConfigModule.forRoot({
       inject: [ConfigService],
     }),
     DatabaseModule,
+    CommonServicesModule,
     MailerModule,
     AuthModule,
     UsersModule,

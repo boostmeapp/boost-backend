@@ -1,39 +1,28 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { FeedService } from './feed.service';
-import { JwtAuthGuard } from '../../common/guards';
+import { JwtAuthGuard, OptionalJwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
-import { PaginationDto } from '../../common/dto';
+import { FeedQueryDto } from './dto';
 
 @Controller('feed')
 export class FeedController {
   constructor(private readonly feedService: FeedService) {}
 
-  // ✅ GLOBAL FEED (NO AUTH)
-@Get('global')
-async getGlobalFeed(
-  @Query() query: PaginationDto,
-  @CurrentUser() user?: User, // OPTIONAL USER
-) {
-  return this.feedService.getGlobalFeed(
-    query.page,
-    query.limit,
-    user?._id?.toString(), // may be undefined
-  );
-}
+  // Public, but richer for a signed-in viewer (hasLiked + block filtering).
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('global')
+  async getGlobalFeed(@Query() query: FeedQueryDto, @CurrentUser() user?: User) {
+    return this.feedService.getGlobalFeed(query, user?._id?.toString());
+  }
 
-
-  // ✅ FOLLOWING FEED (AUTH REQUIRED)
   @UseGuards(JwtAuthGuard)
   @Get('following')
   async getFollowingFeed(
     @CurrentUser() user: User,
-    @Query() query: PaginationDto,
+    @Query() query: FeedQueryDto,
   ) {
-    return this.feedService.getFollowingFeed(
-      user._id.toString(),   // IMPORTANT use _id not id
-      query.page,
-      query.limit,
-    );
+    // IMPORTANT use _id not id
+    return this.feedService.getFollowingFeed(user._id.toString(), query);
   }
 }

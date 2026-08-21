@@ -3,9 +3,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { PaginateModel, Model } from 'mongoose';
 import { Video, ModerationStatus } from '../../database/schemas/video/video.schema';
 import { LikesService } from '../likes/likes.service';
-import { Follow } from 'src/database/schemas/follow/follow.schema';
+import { Follow } from '../../database/schemas/follow/follow.schema';
 import { User } from '../../database/schemas/user/user.schema';
 import { Types } from 'mongoose';
+import { MediaUrlService } from '../../common/services/media-url.service';
+import { FeedQueryDto } from './dto';
 
 
 @Injectable()
@@ -15,7 +17,136 @@ constructor(
   @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
   @InjectModel(User.name) private userModel: Model<User>,
   private likesService: LikesService,
+  private mediaUrl: MediaUrlService,
 ) {}
+
+  /** Fields the mobile client actually reads. Everything else stays on the server. */
+  private static readonly FEED_PROJECTION =
+    'user title description tags likeCount commentCount shareCount viewCount ' +
+    'duration rawVideoKey thumbnailUrl thumbnailKey isBoosted createdAt';
+
+  private static readonly USER_PROJECTION =
+    'firstName lastName username profileImage';
+
+  private encodeCursor(v: any): string {
+    return Buffer.from(
+      `${new Date(v.createdAt).getTime()}_${v._id}`,
+    ).toString('base64url');
+  }
+
+  private decodeCursor(
+    cursor: string,
+  ): { createdAt: Date; id: Types.ObjectId } | null {
+    try {
+      const [ts, id] = Buffer.from(cursor, 'base64url')
+        .toString('utf8')
+        .split('_');
+      const millis = Number(ts);
+      // Both halves must be present and well-formed, or the query silently returns an empty page.
+      if (!ts || !id || !Number.isFinite(millis) || !Types.ObjectId.isValid(id)) {
+        return null;
+      }
+      return { createdAt: new Date(millis), id: new Types.ObjectId(id) };
+    } catch {
+      return null; // a bad cursor is treated as "start from the beginning"
+    }
+  }
+
+  /** Shapes one lean document into the wire format the app consumes. */
+  private present(video: any, hasLiked: boolean) {
+    return {
+      _id: video._id,
+      user: video.user,
+      title: video.title,
+      description: video.description,
+      tags: video.tags,
+      likeCount: video.likeCount,
+      commentCount: video.commentCount,
+      shareCount: video.shareCount,
+      viewCount: video.viewCount,
+      duration: video.duration,
+      isBoosted: video.isBoosted,
+      createdAt: video.createdAt,
+
+      // Absolute and playable. The client no longer composes URLs.
+      videoUrl: this.mediaUrl.toUrl(video.rawVideoKey),
+      thumbnailUrl: this.mediaUrl.toUrl(video.thumbnailKey || video.thumbnailUrl),
+
+      // Kept for one release so the currently-installed app keeps working.
+      rawVideoKey: video.rawVideoKey,
+
+      hasLiked,
+    };
+  }
+
+  /** One keyset-or-offset paginator for both feeds. Cursor mode when `cursor` is supplied. */
+  private async paginate(
+    baseQuery: Record<string, any>,
+    { page = 1, limit = 20, cursor }: FeedQueryDto,
+    viewerId?: string,
+  ) {
+    const query: Record<string, any> = { ...baseQuery };
+    const useCursor = Boolean(cursor);
+
+    if (useCursor) {
+      const c = this.decodeCursor(cursor!);
+      if (c) {
+        query.$and = [
+          ...(query.$and || []),
+          {
+            $or: [
+              { createdAt: { $lt: c.createdAt } },
+              { createdAt: c.createdAt, _id: { $lt: c.id } },
+            ],
+          },
+        ];
+      }
+    }
+
+    const q = this.videoModel
+      .find(query)
+      .select(FeedService.FEED_PROJECTION)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1) // +1 tells us if there is a next page
+      .populate('user', FeedService.USER_PROJECTION)
+      .lean();
+
+    if (!useCursor) q.skip((page - 1) * limit);
+
+    const rows = await q.exec();
+
+    const hasNextPage = rows.length > limit;
+    if (hasNextPage) rows.pop();
+
+    let likedMap = new Map<string, boolean>();
+    if (viewerId && rows.length) {
+      likedMap = await this.likesService.hasUserLikedVideos(
+        viewerId,
+        rows.map(v => v._id.toString()),
+      );
+    }
+
+    const docs = rows.map(v =>
+      this.present(v, likedMap.get(v._id.toString()) || false),
+    );
+
+    return {
+      docs,
+      nextCursor:
+        hasNextPage && rows.length
+          ? this.encodeCursor(rows[rows.length - 1])
+          : null,
+      limit,
+      page,
+      hasNextPage,
+      hasPrevPage: page > 1,
+
+      // countDocuments() removed: it was a full index scan on every page request
+      // and only fed hasNextPage, which limit+1 now answers exactly.
+      totalDocs: null,
+      totalPages: null,
+    };
+  }
 
 // Ids of users the viewer has blocked — their content is hidden from feeds.
 private async getBlockedUserIds(userId?: string): Promise<Types.ObjectId[]> {
@@ -27,12 +158,9 @@ private async getBlockedUserIds(userId?: string): Promise<Types.ObjectId[]> {
   return (user?.blockedUsers as Types.ObjectId[]) || [];
 }
 
-async getFollowingFeed(userId: string, page = 1, limit = 20) {
-  const skip = (page - 1) * limit;
-  const userObjectId = new Types.ObjectId(userId);
-
+async getFollowingFeed(userId: string, query: FeedQueryDto) {
   const followingDocs = await this.followModel
-    .find({ follower: userObjectId })
+    .find({ follower: new Types.ObjectId(userId) })
     .select('following')
     .lean();
 
@@ -42,12 +170,13 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
   if (!followingIds.length) {
     return {
       docs: [],
-      totalDocs: 0,
-      limit,
-      page,
-      totalPages: 0,
+      nextCursor: null,
+      limit: query.limit ?? 20,
+      page: query.page ?? 1,
       hasNextPage: false,
       hasPrevPage: false,
+      totalDocs: 0,
+      totalPages: 0,
     };
   }
 
@@ -58,101 +187,29 @@ async getFollowingFeed(userId: string, page = 1, limit = 20) {
       )
     : followingIds;
 
-  const query = {
-    user: { $in: visibleFollowingIds },
-    processingStatus: 'ready',
-    moderationStatus: { $ne: ModerationStatus.REMOVED },
-  };
-
-  const totalDocs = await this.videoModel.countDocuments(query);
-
-  const videos = await this.videoModel
-    .find(query)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .populate('user', 'firstName lastName profileImage')
-    .lean();
-
-  const videoIds = videos.map(v => v._id.toString());
-
-  const likedMap = await this.likesService.hasUserLikedVideos(
+  return this.paginate(
+    {
+      user: { $in: visibleFollowingIds },
+      processingStatus: 'ready',
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
+    },
+    query,
     userId,
-    videoIds,
   );
-
-  const finalVideos = videos.map(video => ({
-    ...video,
-    hasLiked: likedMap.get(video._id.toString()) || false,
-  }));
-
-  return {
-    docs: finalVideos,
-    totalDocs,
-    limit,
-    page,
-    totalPages: Math.ceil(totalDocs / limit),
-    hasNextPage: page * limit < totalDocs,
-    hasPrevPage: page > 1,
-  };
 }
 
-
-
-async getGlobalFeed(page = 1, limit = 20, userId?: string) {
-  const skip = (page - 1) * limit;
-
+async getGlobalFeed(query: FeedQueryDto, userId?: string) {
   const blockedIds = await this.getBlockedUserIds(userId);
 
-  const query: any = {
+  const base: any = {
     processingStatus: 'ready',
     moderationStatus: { $ne: ModerationStatus.REMOVED },
   };
   if (blockedIds.length) {
-    query.user = { $nin: blockedIds };
+    base.user = { $nin: blockedIds };
   }
 
-  const totalDocs = await this.videoModel.countDocuments(query);
-
-  const videos = await this.videoModel
-    .find(query)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .populate('user', 'firstName lastName profileImage')
-    .lean();
-
-  // ✅ ADD LIKE STATUS
-  let finalVideos = videos;
-
-  if (userId) {
-    const videoIds = videos.map(v => v._id.toString());
-
-    const likedMap = await this.likesService.hasUserLikedVideos(
-      userId,
-      videoIds,
-    );
-
-    finalVideos = videos.map(video => ({
-      ...video,
-      hasLiked: likedMap.get(video._id.toString()) || false,
-    }));
-  } else {
-    finalVideos = videos.map(video => ({
-      ...video,
-      hasLiked: false,
-    }));
-  }
-
-  return {
-    docs: finalVideos,
-    totalDocs,
-    limit,
-    page,
-    totalPages: Math.ceil(totalDocs / limit),
-    hasNextPage: page * limit < totalDocs,
-    hasPrevPage: page > 1,
-  };
+  return this.paginate(base, query, userId);
 }
 
 
@@ -163,6 +220,9 @@ async getGlobalFeed(page = 1, limit = 20, userId?: string) {
    * - Boosted videos injected every N items
    * - Non-boosted videos from boosted users ALSO included
    * - No duplicate videos
+   *
+   * ⚠️ Wired to no route (D-36). Enabling it needs a precomputed, indexed rankScore —
+   * as written it loads every ready video into memory on every request.
    */
 
   private calculateRankScore(video: any): number {
