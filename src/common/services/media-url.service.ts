@@ -35,4 +35,11 @@ export class MediaUrlService {
     }
     return this.base + v.replace(/^\/+/, '');
   }
+
+  /** Serialise a user with profileImage on the delivery host. Use at every site that returns one. */
+  toPublicUser(user?: any): any {
+    if (!user) return null;
+    const plain = typeof user.toObject === 'function' ? user.toObject() : user;
+    return { ...plain, profileImage: this.toUrl(plain.profileImage) };
+  }
 }

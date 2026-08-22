@@ -13,6 +13,7 @@ import { LikesService } from '../likes/likes.service';
 import { FollowsService } from '../follows/follows.service';
 import { scanText } from '../../common/utils/content-filter.util';
 import { MediaUrlService } from '../../common/services/media-url.service';
+import { UploadService } from '../upload/upload.service';
 
 
 @Injectable()
@@ -23,7 +24,41 @@ export class VideoService {
     private readonly likesService: LikesService,
     private readonly followsService: FollowsService,
     private readonly mediaUrl: MediaUrlService,
+    private readonly uploadService: UploadService,
   ) { }
+
+  /** A client-supplied key is only trustworthy once proven to be the caller's and proven to exist. */
+  private async assertOwnedObject(
+    userId: string,
+    key: string,
+    prefix: string,
+    maxBytes?: number,
+  ): Promise<void> {
+    if (!key.startsWith(`${prefix}/${userId}/`)) {
+      console.warn(`[publish] REJECTED user=${userId} does not own key=${key}`);
+      throw new ForbiddenException(`Invalid ${prefix} key for this user`);
+    }
+
+    const head = await this.uploadService.headObject(key);
+    if (!head) {
+      console.warn(`[publish] REJECTED key=${key} has no object in S3`);
+      throw new BadRequestException(`Uploaded ${prefix} object was not found`);
+    }
+
+    if (maxBytes && head.size > maxBytes) {
+      console.warn(
+        `[publish] REJECTED key=${key} is ${(head.size / 1024 / 1024).toFixed(2)}MB, ` +
+          `over the ${maxBytes / 1024 / 1024}MB ceiling`,
+      );
+      throw new BadRequestException(
+        `Uploaded object too large. Maximum size: ${maxBytes / 1024 / 1024}MB`,
+      );
+    }
+
+    console.log(
+      `[publish] verified ${prefix} key=${key} ${(head.size / 1024 / 1024).toFixed(2)}MB`,
+    );
+  }
 
 
   /**
@@ -41,6 +76,17 @@ export class VideoService {
       throw new BadRequestException(
         'Your post contains language that violates our Community Guidelines and cannot be published.',
       );
+    }
+
+    await this.assertOwnedObject(
+      userId,
+      dto.rawVideoKey,
+      'videos',
+      this.uploadService.MAX_VIDEO_UPLOAD_SIZE,
+    );
+
+    if (dto.thumbnailKey) {
+      await this.assertOwnedObject(userId, dto.thumbnailKey, 'thumbnails');
     }
 
     const video = new this.videoModel({
@@ -61,7 +107,12 @@ export class VideoService {
       shareCount: 0,
     });
 
-    return video.save();
+    const saved = await video.save();
+    console.log(
+      `[publish] CREATED video=${saved._id} user=${userId} key=${dto.rawVideoKey} ` +
+        `cover=${dto.thumbnailKey ?? '(none)'} duration=${dto.duration}s`,
+    );
+    return saved;
   }
 
 
@@ -175,6 +226,7 @@ export class VideoService {
 
     return {
       ...video,
+      user: this.mediaUrl.toPublicUser(video.user),
       // Absolute and playable, matching the feed contract.
       videoUrl: this.mediaUrl.toUrl(video.rawVideoKey),
       thumbnailUrl: this.mediaUrl.toUrl(

@@ -1,6 +1,8 @@
 # Iteration 7 — Media Compression, Upload Limits, Direct-to-S3 & Real Progress
 
-**Status:** audit + plan. **No production code was changed to produce this document.**
+**Status:** 🔨 **implemented 2026-08-22** — every step (7.0, 7.A–7.F) is in the tree and both
+codebases build. §15's test plan has **not** been run: it needs a device build and a live
+bucket. See the implementation notes at the end of this file before shipping.
 **Scope:** mobile (primary) + backend (presign/validation) + one S3 lifecycle rule.
 **Opens:** D-50 … D-65.
 **Closes / supersedes:** D-47 and D-49 from [00-OVERVIEW.md](00-OVERVIEW.md), and **absorbs
@@ -1018,3 +1020,124 @@ safe to ship either side of the planned data wipe. Legacy uncompressed objects k
 exactly as they do today until the wipe removes them; the new pipeline only governs new
 uploads. **Preferred sequence: wipe first, then ship — so the bucket never re-accumulates
 what the wipe just cleared.**
+
+---
+
+## 18. Implementation notes — 2026-08-22
+
+### 18.1 Spike outcomes
+
+| Spike | Outcome |
+|---|---|
+| **S-7.1** — `expo-image-manipulator` SDK-54 API | ✅ **Resolved.** Installed `~14.0.8`. The contextual API is the live one: `ImageManipulator.manipulate(uri).resize({width\|height}).renderAsync()` → `ImageRef.saveAsync({ compress, format: SaveFormat.JPEG })`. `manipulateAsync` still exists but is marked `@deprecated`. `ImageRef` carries `.width`/`.height`, which is how `compressImage` learns the source dimensions without a second decode. |
+| **S-7.2** — `react-native-compressor` under New Architecture | ⚠️ **Partially resolved — device test still owed.** The current release is `2.0.3`, which is **Nitro-based** and therefore New-Architecture-native; `react-native-nitro-modules@0.37.0` was installed as its required peer. Both pods autolink (`ios/Podfile.lock` carries `react-native-compressor (2.0.3)` and `NitroModules`) and the Metro bundle builds. **What is still unverified: an actual on-device run**, plus the compression time / output size measurements the spike asked for. |
+| **S-7.3** — `createUploadTask` multipart field ordering | ✅ **Resolved — presigned POST is viable.** Verified in the installed native source: iOS `ios/Legacy/NetworkingHelpers.swift:createMultipartBody` writes `options.parameters` **before** the file part, and Android `FileSystemLegacyModule.kt:910-918` adds `parameters` to the `MultipartBody.Builder` before `addFormDataPart(fieldName, …)`. Both put `file` last, which is what S3's presigned-POST parser requires. The PUT fallback was therefore not needed. |
+
+### 18.2 Deviations from the plan as written
+
+**The shipped code is the final post-iteration-7 state. No pre-iteration path survives**, at
+the owner's direction (2026-08-22) — the two-release compatibility window in §13.2/§17 was
+dropped in favour of a clean cut.
+
+1. **`POST /upload/video` is deleted, not kept for two releases.** The proxied route was the
+   whole of D-47/D-54: a 500 MB body buffered to the instance's `/tmp`. Keeping it alive meant
+   keeping that defect alive. `UploadService.uploadFile` is now buffer-only (`memoryStorage`
+   for images), the `fs` stream/unlink path is gone, and `MAX_VIDEO_INPUT_SIZE` no longer
+   exists server-side — the only video ceiling on the backend is `MAX_VIDEO_UPLOAD_SIZE`
+   (100 MB), enforced at presign and authoritatively by S3.
+
+2. **The image multer cap is 1 MB, not 10 MB.** §12.2 held it at 10 MB for one release so old
+   builds would not 400. With no old builds to support, the cap matches the client's own
+   post-compression ceiling. This closes D-61 for images too — it is no longer "mitigated".
+
+3. **No rollback flags.** `MEDIA_VALIDATION_ENABLED`, `IMAGE_COMPRESSION_ENABLED`,
+   `VIDEO_COMPRESSION_ENABLED`, `DIRECT_UPLOAD_ENABLED` and `VIDEO_KEY_ASSERTIONS_ENABLED` are
+   removed — each was an `if (!flag) { …pre-iteration behaviour… }` branch. §17's rollback
+   story is now "revert the commit".
+
+4. **Dead upload DTOs removed.** `RequestUploadDto`, `ConfirmUploadDto`, `DirectUploadDto` and
+   the `SignedUploadUrl` interface were referenced by nothing; `UploadType` moved to
+   `dto/upload-type.enum.ts`.
+
+5. **The orphan lifecycle rule's tagging mechanism was not built.** §11.3 specifies expiring
+   `videos/*/` objects that carry `x-amz-meta-status: pending`, cleared on publish — but S3
+   lifecycle rules **cannot filter on metadata**, only on prefix and object *tags*. Making it
+   work means adding a `tagging` form field to the presigned POST and a `PutObjectTagging` call
+   at publish. That puts an untested field on the critical upload path, so it was left out
+   rather than guessed at. D-64's row-level half is closed regardless (`HeadObject` at publish,
+   plus same-key retry drafts). **Build the tagging field and the rule together, and rehearse
+   both on the dev bucket.**
+
+6. **`react-native-compressor` was installed despite §17's "not until S-7.2 passes".** Metro
+   resolves `require` statically, so a `try { require(...) } catch {}` guard fails the bundle
+   rather than degrading — the module cannot be referenced at all unless it is installed.
+
+7. **fps and keyframe interval are not set.** §9.2 specifies 30 fps and a 2 s keyframe interval;
+   `react-native-compressor` exposes only `bitrate` and `maxSize` in `manual` mode. Resolution
+   and bitrate are enforced; frame-rate and GOP normalisation fall to Iteration 5 Phase C's
+   remux, which was already the guarantee for container layout.
+
+8. **D-60 was closed with a helper, not four call-site patches** — `MediaUrlService.toPublicUser()`,
+   applied at all four sites, as §13.2's "preferred over four call-site patches" note asked.
+
+### 18.2b S3 / IAM policy changes — REQUIRED, and §13.3 is wrong about this
+
+§13.3 says "IAM policy: **No change**" and "Bucket policy: **No change**". That holds for the
+presign work — `videos/*` is already granted and presigning delegates the signer's own
+permission — but it is **wrong for D-62's new `chat/` prefix**.
+
+Probed against `boostme-storage-dev` on 2026-08-22 (1-byte objects, all deleted afterwards):
+
+| Prefix | Backend `s3:PutObject` | Anonymous read |
+|---|---|---|
+| `videos/` | ALLOW | 200 |
+| `thumbnails/` | ALLOW | 200 |
+| `profiles/` | ALLOW | 200 |
+| **`chat/`** | **DENY** | untestable — cannot write there |
+| `uploads/` | DENY | — |
+
+Both the IAM policy and, by the same pattern, the bucket policy are **scoped to those three
+prefixes**, not `bucket/*`. Chat uploads therefore fail with `AccessDenied` on `PutObject`
+before the read policy even matters. Two additive changes on **both** buckets:
+
+1. **IAM policy on the backend user** — add `arn:aws:s3:::{bucket}/chat/*` with `s3:PutObject`
+   (the upload), `s3:GetObject` (`ChatService` presigns a GET for chat image keys) and
+   `s3:DeleteObject` if mirroring the other prefixes.
+2. **Bucket policy public-read statement** — add `arn:aws:s3:::{bucket}/chat/*` to its
+   `Resource` list, or chat images 403 for viewers.
+
+The policies could not be read from here: `boostme-backend-dev` lacks `s3:GetBucketPolicy` and
+`cloudfront:ListDistributions`. Console access is needed.
+
+### 18.3 What was added
+
+**Backend** — `upload/dto/presign-upload.dto.ts` (new) · `UploadType.CHAT_IMAGE` ·
+`UploadService.generatePresignedPost()` / `.headObject()` / `MAX_VIDEO_UPLOAD_SIZE` ·
+`POST /upload/presign` · `VideoService.assertOwnedObject()` ·
+`MediaUrlService.toPublicUser()` at four sites ·
+`generateProfileImageUploadUrl` deleted · **`POST /upload/video` deleted** · image multer caps
+lowered to 1 MB · dead upload DTOs removed.
+
+**Mobile** — `src/constants/media.js`, `src/utils/mediaValidation.js`,
+`src/utils/mediaCompression.js`, `src/utils/uploadProgress.js`,
+`src/services/mediaUploadManager.js` (all new) · `uploadService` rewritten around one
+`multipartUpload` primitive with progress on every path and no chat→profile fallback ·
+`UploadScreen` validates, compresses, and delegates the whole publish to the manager, with a
+Cancel button · cover/avatar/chat call sites compress before upload · the legacy
+`uploadService.uploadFile` proxy method and its `UPLOAD.DIRECT` endpoint are gone.
+
+**Dependencies** — `@aws-sdk/s3-presigned-post` (and `@aws-sdk/s3-request-presigner` bumped to
+match `client-s3`, which otherwise produced a duplicate-`@aws-sdk/types` type conflict) ·
+`expo-image-manipulator`, `expo-keep-awake`, `react-native-compressor`,
+`react-native-nitro-modules` · `pod install` run; `react-native-compressor` added to
+`app.json` plugins.
+
+### 18.4 Verification actually performed
+
+Backend `nest build` and `tsc --noEmit` clean (the one remaining `tsc` error,
+`test/app.e2e-spec.ts`'s `import * as request from 'supertest'`, predates this work). Mobile
+`expo export --platform ios` bundles, so every new import resolves. `createPresignedPost` was
+called locally with dummy credentials and its policy inspected: conditions come out as
+`content-length-range 1–104857600`, `eq $Content-Type`, and eq-bound `Content-Type` /
+`Cache-Control` / `bucket` / `key`. **No test from §15 has been run** — all of them need a
+device build, a live bucket, or both.

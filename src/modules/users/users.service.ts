@@ -15,6 +15,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { FollowsService } from '../follows/follows.service';
 import { Video } from '../../database/schemas/video/video.schema';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
+import { MediaUrlService } from '../../common/services/media-url.service';
 
 
 @Injectable()
@@ -23,6 +24,7 @@ constructor(
   @InjectModel(User.name) private userModel: Model<User>,
   @InjectModel(Video.name) private videoModel: Model<Video>,
   @InjectModel(Follow.name) private followModel: Model<Follow>,
+  private readonly mediaUrl: MediaUrlService,
 ) {}
 
   private static readonly USERNAME_CHANGE_DAYS = 60;
@@ -127,7 +129,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
   .lean();
 
   return {
-    user,
+    user: this.mediaUrl.toPublicUser(user),
     stats: {
       followers,
       following,
@@ -154,7 +156,7 @@ async findByEmail(email: string): Promise<User | null> {
 }
 
 
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<any> {
     const user = await this.userModel
       .findByIdAndUpdate(
         id,
@@ -171,7 +173,7 @@ async findByEmail(email: string): Promise<User | null> {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
 
-    return user;
+    return this.mediaUrl.toPublicUser(user);
   }
   async updateMe(userId: string, dto: UpdateUserDto) {
     const user = await this.userModel.findById(userId);

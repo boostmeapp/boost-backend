@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Post,
   UseGuards,
@@ -7,12 +8,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage, diskStorage } from 'multer';
+import { memoryStorage } from 'multer';
 import { UploadService } from './upload.service';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
-import { UploadType } from './dto';
+import { PresignUploadDto, UploadType } from './dto';
 import { UsersService } from '../users/users.service';
 
 @Controller('upload')
@@ -23,12 +24,22 @@ export class UploadController {
     private readonly usersService: UsersService, // ✅ ADD
   ) {}
 
+  // Direct-to-S3 for video: the API authorises and bounds, but never sees a media byte.
+  @Post('presign')
+  async presign(@CurrentUser() user: User, @Body() dto: PresignUploadDto) {
+    const presigned = await this.uploadService.generatePresignedPost(
+      user.id,
+      dto,
+    );
+    return { success: true, ...presigned };
+  }
+
   // ✅ SINGLE FINAL ENDPOINT FOR PROFILE IMAGES
   @Post('profile-image')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(), // ✅ REQUIRED
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+      limits: { fileSize: 1 * 1024 * 1024 }, // 1MB
       fileFilter: (_, file, cb) => {
         if (!file.mimetype.startsWith('image/')) {
           return cb(
@@ -72,7 +83,7 @@ export class UploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+      limits: { fileSize: 1 * 1024 * 1024 }, // 1MB
       fileFilter: (_, file, cb) => {
         if (!file.mimetype.startsWith('image/')) {
           return cb(
@@ -94,7 +105,7 @@ export class UploadController {
 
     const { url, key } = await this.uploadService.uploadFile(
       user.id,
-      UploadType.PROFILE_IMAGE,
+      UploadType.CHAT_IMAGE,
       file,
     );
 
@@ -109,7 +120,7 @@ export class UploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB — matches MAX_IMAGE_SIZE
+      limits: { fileSize: 1 * 1024 * 1024 }, // 1MB — matches MAX_IMAGE_UPLOAD_SIZE
       fileFilter: (_, file, cb) => {
         if (!file.mimetype.startsWith('image/')) {
           return cb(
@@ -137,36 +148,5 @@ export class UploadController {
 
     return { success: true, url, key };
   }
-
-  @Post('video')
-@UseInterceptors(
-  FileInterceptor('file', {
-    storage: diskStorage({ destination: '/tmp' }),
-    limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
-    fileFilter: (_, file, cb) => {
-      if (!file.mimetype.startsWith('video/')) {
-        return cb(
-          new BadRequestException('Only video files allowed'),
-          false,
-        );
-      }
-      cb(null, true);
-    },
-  }),
-)
-async uploadVideo(
-  @CurrentUser() user: User,
-  @UploadedFile() file: Express.Multer.File,
-) {
-  if (!file?.buffer && !file?.path) {
-    throw new BadRequestException('Video file is required');
-  }
-
-  return this.uploadService.uploadFile(
-    user.id,
-    UploadType.VIDEO,
-    file,
-  );
-}
 
 }

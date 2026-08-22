@@ -18,8 +18,8 @@ testable, and does not depend on any later iteration.
 | 1 | [01-PLAYBACK-AUTHORITY.md](01-PLAYBACK-AUTHORITY.md) | Frontend only | Low | ✅ Shipped |
 | 2 | [02-POSTER-PIPELINE.md](02-POSTER-PIPELINE.md) | Frontend + Backend | Low–Medium | ✅ Shipped |
 | 3 | [03-FEED-API-CONTRACT.md](03-FEED-API-CONTRACT.md) | Backend + Frontend | Medium | ✅ Shipped |
-| **7** | [**07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md**](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) | Mobile + Backend | Medium | ⬅ **Next — runs before 4** |
-| 4 | [04-PRELOAD-AND-CACHE.md](04-PRELOAD-AND-CACHE.md) | Frontend only | Medium | Then |
+| **7** | [**07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md**](07-UPLOAD-COMPRESSION-AND-DIRECT-S3.md) | Mobile + Backend | Medium | 🔨 **Code complete — awaiting device test** |
+| 4 | [04-PRELOAD-AND-CACHE.md](04-PRELOAD-AND-CACHE.md) | Frontend only | Medium | ⬅ **Next** |
 | 5 | [05-DELIVERY-CDN-FASTSTART.md](05-DELIVERY-CDN-FASTSTART.md) | Backend + AWS infra | Medium | Phase A ✅ done · Phase B **dropped** · Phase C remains · Phase D → moved to 7 |
 | 6 | [06-PLAYER-ENGINE-MIGRATION.md](06-PLAYER-ENGINE-MIGRATION.md) | Frontend + Backend | High | Last |
 

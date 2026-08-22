@@ -1,21 +1,32 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { v4 as uuidv4 } from 'uuid';
-import * as fs from 'fs';
-import { UploadType } from './dto';
-
-export interface SignedUploadUrl {
-  uploadId: string;
-  uploadUrl: string;
-  key: string;
-  expiresIn: number;
-}
+import { PresignUploadDto, UploadType } from './dto';
 
 export interface SignedDownloadUrl {
   url: string;
   expiresIn: number;
+}
+
+export interface PresignedUpload {
+  url: string;
+  fields: Record<string, string>;
+  key: string;
+  expiresIn: number;
+}
+
+export interface ObjectHead {
+  size: number;
+  contentType?: string;
 }
 
 @Injectable()
@@ -24,8 +35,10 @@ export class UploadService {
   private bucketName: string;
 
   // File size limits (in bytes)
-  private readonly MAX_VIDEO_SIZE = 500 * 1024 * 1024; // 500MB
-  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+  // The most that may enter the bucket: 180s of video at 3.63Mbps plus VBR headroom.
+  readonly MAX_VIDEO_UPLOAD_SIZE = 100 * 1024 * 1024; // 100MB
+  // Clients compress before uploading, so anything larger is a client that did not.
+  readonly MAX_IMAGE_UPLOAD_SIZE = 1 * 1024 * 1024; // 1MB
 
   // Signed URL expiration times
   private readonly UPLOAD_URL_EXPIRATION = 3600; // 1 hour
@@ -33,6 +46,10 @@ export class UploadService {
 
   // Keys carry a uuid, so objects are immutable and safe to cache for a year.
   private readonly IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+  private static mb(bytes: number): string {
+    return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+  }
 
   constructor(private configService: ConfigService) {
     const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
@@ -97,40 +114,73 @@ export class UploadService {
 
     await this.s3Client.send(command);
   }
-async generateProfileImageUploadUrl(
-  userId: string,
-  fileName: string,
-  fileSize: number,
-): Promise<{
-  uploadUrl: string;
-  fileUrl: string;
-  key: string;
-}> {
-  this.validateFileSize(UploadType.PROFILE_IMAGE, fileSize);
+  /** Presigned POST for a direct device -> S3 upload; PUT is unusable because it cannot bound body size. */
+  async generatePresignedPost(
+    userId: string,
+    dto: PresignUploadDto,
+  ): Promise<PresignedUpload> {
+    // Images keep the proxy path — they are <1MB after client compression and do server-side work.
+    if (dto.type !== UploadType.VIDEO) {
+      throw new BadRequestException('Only video uploads use presigned upload');
+    }
 
-  const key = this.generateS3Key(
-    userId,
-    UploadType.PROFILE_IMAGE,
-    fileName,
-  );
+    if (!dto.contentType.startsWith('video/')) {
+      throw new BadRequestException('Only video content types allowed');
+    }
 
-  const command = new PutObjectCommand({
-    Bucket: this.bucketName,
-    Key: key,
-    ContentType: 'image/jpeg',
-    ACL: 'public-read',
-  });
+    if (dto.fileSize > this.MAX_VIDEO_UPLOAD_SIZE) {
+      console.warn(
+        `[presign] DENIED user=${userId} ${UploadService.mb(dto.fileSize)} exceeds ` +
+          `${UploadService.mb(this.MAX_VIDEO_UPLOAD_SIZE)}`,
+      );
+      throw new BadRequestException(
+        `Video file too large. Maximum size: ${this.MAX_VIDEO_UPLOAD_SIZE / 1024 / 1024}MB`,
+      );
+    }
 
-  const uploadUrl = await getSignedUrl(this.s3Client, command, {
-    expiresIn: this.UPLOAD_URL_EXPIRATION,
-  });
+    const key = this.generateS3Key(userId, dto.type, dto.fileName);
 
-  return {
-    uploadUrl,
-    key,
-    fileUrl: this.getPublicUrl(key),
-  };
-}
+    const { url, fields } = await createPresignedPost(this.s3Client, {
+      Bucket: this.bucketName,
+      Key: key,
+      Expires: this.UPLOAD_URL_EXPIRATION,
+      Fields: {
+        'Content-Type': dto.contentType,
+        'Cache-Control': this.IMMUTABLE_CACHE_CONTROL,
+      },
+      // S3 itself rejects an oversized body with 400 EntityTooLarge — the only authoritative gate.
+      Conditions: [
+        ['content-length-range', 1, this.MAX_VIDEO_UPLOAD_SIZE],
+        ['eq', '$Content-Type', dto.contentType],
+      ],
+    });
+
+    console.log(
+      `[presign] GRANTED user=${userId} key=${key} declared=${UploadService.mb(dto.fileSize)} ` +
+        `ceiling=${UploadService.mb(this.MAX_VIDEO_UPLOAD_SIZE)} expires=${this.UPLOAD_URL_EXPIRATION}s`,
+    );
+
+    return { url, fields, key, expiresIn: this.UPLOAD_URL_EXPIRATION };
+  }
+
+  /** Object metadata, or null when the key does not exist. */
+  async headObject(key: string): Promise<ObjectHead | null> {
+    try {
+      const res = await this.s3Client.send(
+        new HeadObjectCommand({ Bucket: this.bucketName, Key: key }),
+      );
+      const size = res.ContentLength ?? 0;
+      console.log(`[head] ${key} -> ${UploadService.mb(size)} ${res.ContentType ?? ''}`);
+      return { size, contentType: res.ContentType };
+    } catch (error) {
+      const status = error?.$metadata?.httpStatusCode;
+      if (status === 404 || status === 403 || error?.name === 'NotFound') {
+        console.warn(`[head] ${key} -> MISSING (${status})`);
+        return null;
+      }
+      throw error;
+    }
+  }
 
   /**
    * Generate S3 key based on upload type
@@ -147,6 +197,8 @@ async generateProfileImageUploadUrl(
         return `thumbnails/${userId}/${timestamp}-${randomId}.${extension}`;
       case UploadType.PROFILE_IMAGE:
         return `profiles/${userId}/${timestamp}-${randomId}.${extension}`;
+      case UploadType.CHAT_IMAGE:
+        return `chat/${userId}/${timestamp}-${randomId}.${extension}`;
       default:
         return `uploads/${userId}/${timestamp}-${randomId}.${extension}`;
     }
@@ -166,18 +218,19 @@ async generateProfileImageUploadUrl(
   private validateFileSize(type: UploadType, fileSize: number): void {
     switch (type) {
       case UploadType.VIDEO:
-        if (fileSize > this.MAX_VIDEO_SIZE) {
+        if (fileSize > this.MAX_VIDEO_UPLOAD_SIZE) {
           throw new BadRequestException(
-            `Video file too large. Maximum size: ${this.MAX_VIDEO_SIZE / 1024 / 1024}MB`,
+            `Video file too large. Maximum size: ${this.MAX_VIDEO_UPLOAD_SIZE / 1024 / 1024}MB`,
           );
         }
         break;
 
       case UploadType.THUMBNAIL:
       case UploadType.PROFILE_IMAGE:
-        if (fileSize > this.MAX_IMAGE_SIZE) {
+      case UploadType.CHAT_IMAGE:
+        if (fileSize > this.MAX_IMAGE_UPLOAD_SIZE) {
           throw new BadRequestException(
-            `Image file too large. Maximum size: ${this.MAX_IMAGE_SIZE / 1024 / 1024}MB`,
+            `Image file too large. Maximum size: ${this.MAX_IMAGE_UPLOAD_SIZE / 1024 / 1024}MB`,
           );
         }
         break;
@@ -193,28 +246,20 @@ async generateProfileImageUploadUrl(
     return `https://${this.bucketName}.s3.${region}.amazonaws.com/${key}`;
   }
 
-  /**
-   * Upload a file directly to S3 (server-side upload)
-   * Returns the S3 key of the uploaded file
-   */
+  /** Proxy an image to S3; images are small enough after client compression that this costs nothing. */
   async uploadFile(
     userId: string,
     type: UploadType,
     file: Express.Multer.File,
   ): Promise<{ key: string; url: string }> {
-    // Validate file size
     this.validateFileSize(type, file.size);
 
-    // Generate unique key
     const key = this.generateS3Key(userId, type, file.originalname);
 
-    const body = file.buffer || (file.path ? fs.createReadStream(file.path) : undefined);
-
-    // Create PutObject command
     const command = new PutObjectCommand({
       Bucket: this.bucketName,
       Key: key,
-      Body: body,
+      Body: file.buffer,
       ContentLength: file.size,
       ContentType: file.mimetype,
       CacheControl: this.IMMUTABLE_CACHE_CONTROL,
@@ -226,16 +271,11 @@ async generateProfileImageUploadUrl(
     });
 
     try {
-      // Upload to S3
       await this.s3Client.send(command);
+      console.log(`[upload] OK type=${type} key=${key} ${UploadService.mb(file.size)}`);
 
-      // Images land in DB rows served to every viewer, so they must not be presigned.
-      const isImage = type !== UploadType.VIDEO;
-      const url = isImage
-        ? this.getPublicUrl(key)
-        : (await this.generateDownloadUrl(key)).url;
-
-      return { key, url };
+      // Never presigned: these land in DB rows served to every viewer and would expire.
+      return { key, url: this.getPublicUrl(key) };
     } catch (error) {
       console.error('S3 Upload Error:', {
         message: error.message,
@@ -246,14 +286,6 @@ async generateProfileImageUploadUrl(
       throw new BadRequestException(
         `Failed to upload file to S3: ${error.message}`,
       );
-    } finally {
-      if (file.path && fs.existsSync(file.path)) {
-        try {
-          fs.unlinkSync(file.path);
-        } catch (e) {
-          // ignore cleanup error
-        }
-      }
     }
   }
 }

@@ -56,7 +56,7 @@ constructor(
   private present(video: any, hasLiked: boolean) {
     return {
       _id: video._id,
-      user: video.user,
+      user: this.mediaUrl.toPublicUser(video.user),
       title: video.title,
       description: video.description,
       tags: video.tags,
