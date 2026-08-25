@@ -26,18 +26,12 @@ export class ENV {
 
   // Database
   static get MONGODB_URI(): string {
-    return configService.get<string>(
-      'MONGODB_URI',
-      ''
-    );
+    return configService.get<string>('MONGODB_URI', '');
   }
 
   // JWT
   static get JWT_SECRET(): string {
-    return configService.get<string>(
-      'JWT_SECRET',
-      ''
-    );
+    return configService.get<string>('JWT_SECRET', '');
   }
 
   static get JWT_EXPIRES_IN(): string {
@@ -45,10 +39,7 @@ export class ENV {
   }
 
   static get JWT_REFRESH_SECRET(): string {
-    return configService.get<string>(
-      'JWT_REFRESH_SECRET',
-      ''
-    );
+    return configService.get<string>('JWT_REFRESH_SECRET', '');
   }
 
   static get JWT_REFRESH_EXPIRES_IN(): string {
@@ -63,10 +54,6 @@ export class ENV {
   // API
   static get API_PREFIX(): string {
     return configService.get<string>('API_PREFIX', 'api');
-  }
-
-  static get API_VERSION(): string {
-    return configService.get<string>('API_VERSION', 'v1');
   }
 
   // AWS S3
@@ -116,16 +103,6 @@ export class ENV {
     return configService.get<number>('BULL_REDIS_PORT', this.REDIS_PORT);
   }
 
-  static get VIDEO_CHUNK_DURATION(): number {
-    return configService.get<number>('VIDEO_CHUNK_DURATION', 4); // 4 seconds
-  }
-
-  static get VIDEO_QUALITIES(): string[] {
-    return configService
-      .get<string>('VIDEO_QUALITIES', '360p,720p,1080p')
-      .split(',');
-  }
-
   // SMTP / Mail
   static get SMTP_HOST(): string {
     return configService.get<string>('SMTP_HOST', '');
@@ -148,7 +125,10 @@ export class ENV {
   }
 
   static get MAIL_FROM(): string {
-    return configService.get<string>('MAIL_FROM', 'BoostMe <no-reply@boostme.app>');
+    return configService.get<string>(
+      'MAIL_FROM',
+      'BoostMe <no-reply@boostme.app>',
+    );
   }
 
   // Coins: how many coins equal 1 GBP of promote budget (default 100 → 1 coin = £0.01)
@@ -175,7 +155,9 @@ export class ENV {
   }
 
   static get ALLOW_UNVERIFIED_IAP(): boolean {
-    return configService.get<string>('ALLOW_UNVERIFIED_IAP', 'false') === 'true';
+    return (
+      configService.get<string>('ALLOW_UNVERIFIED_IAP', 'false') === 'true'
+    );
   }
 
   // Brevo (HTTP email API — works where outbound SMTP is blocked, e.g. Render)
