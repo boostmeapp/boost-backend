@@ -26,8 +26,9 @@ export class CoinTransaction extends Document {
   @Prop({ trim: true })
   platform?: string; // ios | android for purchases
 
-  // Store transaction id for IAP purchases (idempotency)
-  @Prop({ index: true })
+  // Store transaction id for IAP purchases (idempotency).
+  // Indexed below with { unique, sparse } — that declaration is the authoritative one.
+  @Prop()
   storeTransactionId?: string;
 
   @Prop({ trim: true })

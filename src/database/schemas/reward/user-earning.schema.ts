@@ -140,4 +140,4 @@ export class PayoutRequest extends Document {
 export const PayoutRequestSchema = SchemaFactory.createForClass(PayoutRequest);
 
 PayoutRequestSchema.index({ user: 1, createdAt: -1 });
-PayoutRequestSchema.index({ status: 1 });
+// status is already indexed by @Prop({ index: true }) on the field itself.

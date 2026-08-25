@@ -91,8 +91,10 @@ endDate?: Date;
   @Prop()
   productKey?: string;
 
-  // Store transaction id — unique to prevent replay / double-activation
-  @Prop({ index: true })
+  // Store transaction id — unique to prevent replay / double-activation.
+  // The index is declared below with { unique, sparse }; declaring it here too
+  // would be a second, weaker declaration of the same key.
+  @Prop()
   storeTransactionId?: string;
 
   createdAt: Date;

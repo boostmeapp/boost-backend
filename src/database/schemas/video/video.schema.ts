@@ -171,7 +171,7 @@ VideoSchema.plugin(mongoosePaginate as any);
 VideoSchema.index({ user: 1, createdAt: -1 }); // User's videos
 VideoSchema.index({ isBoosted: 1, boostScore: -1, createdAt: -1 }); // Boosted feed
 VideoSchema.index({ processingStatus: 1, createdAt: -1 }); // Feed sorted by date
-VideoSchema.index({ tags: 1 }); // Search by tags
+// tags is already indexed by @Prop({ index: true }) on the field itself.
 // Additional production indexes
 VideoSchema.index({ user: 1, processingStatus: 1, createdAt: -1 }); // User's videos by status
 VideoSchema.index({ viewCount: -1, createdAt: -1 }); // Trending videos

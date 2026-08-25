@@ -135,7 +135,8 @@ UserSchema.index({ stripeConnectAccountId: 1, stripeOnboardingComplete: 1 }); //
 UserSchema.index({ role: 1, isActive: 1 }); // Admin queries
 UserSchema.index({ isBanned: 1 }); // Security queries
 UserSchema.index({ createdAt: -1 }); // Recent users
-UserSchema.index({ username: 1 });
+// username is already indexed by @Prop({ unique, sparse }) — a plain index here
+// declares the same key a second time, and without the uniqueness constraint.
 
 // 🔍 TEXT SEARCH INDEX (FOR USER SEARCH)
 UserSchema.index(

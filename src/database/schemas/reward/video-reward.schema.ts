@@ -41,4 +41,4 @@ export const VideoRewardSchema = SchemaFactory.createForClass(VideoReward);
 
 // Indexes
 VideoRewardSchema.index({ video: 1, isActive: 1 });
-VideoRewardSchema.index({ boost: 1 });
+// boost is already indexed by @Prop({ index: true }) on the field itself.
