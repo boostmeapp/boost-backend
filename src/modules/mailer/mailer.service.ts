@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
 import { ENV } from '../../config';
+import { MailProvider, MailTransport } from './mail-transport.interface';
+import { BrevoTransport } from './transports/brevo.transport';
+import { SmtpTransport } from './transports/smtp.transport';
 
 interface SendArgs {
   to: string;
@@ -12,63 +14,85 @@ interface SendArgs {
 @Injectable()
 export class MailerService implements OnModuleInit {
   private readonly logger = new Logger(MailerService.name);
-  private transporter: nodemailer.Transporter | null = null;
+
+  /** The one transport MAIL_PROVIDER selected. Null when unusable — never a silent swap. */
+  private transport: MailTransport | null = null;
 
   onModuleInit() {
-    if (!ENV.SMTP_HOST) {
-      this.logger.warn(
-        'SMTP_HOST not configured — emails will be logged only (dev mode).',
+    const requested = ENV.MAIL_PROVIDER;
+
+    const candidate = this.build(requested);
+    if (!candidate) {
+      this.logger.error(
+        `MAIL_PROVIDER="${requested}" is not recognised. Valid values: ` +
+          `${Object.values(MailProvider).join(', ')}. Emails will not be sent.`,
       );
       return;
     }
 
-    this.transporter = nodemailer.createTransport({
-      host: ENV.SMTP_HOST,
-      port: ENV.SMTP_PORT,
-      secure: ENV.SMTP_SECURE,
-      auth:
-        ENV.SMTP_USER && ENV.SMTP_PASSWORD
-          ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASSWORD }
-          : undefined,
-      // Fail fast instead of hanging when the host blocks outbound SMTP
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 15_000,
-    });
+    try {
+      candidate.init();
+    } catch (err) {
+      this.logger.error(
+        `MAIL_PROVIDER=${requested} selected but ${candidate.name} is not configured: ` +
+          `${(err as Error).message}. Emails will not be sent.`,
+      );
+      return;
+    }
 
-    // Verify connectivity at boot so the logs reveal SMTP egress problems
-    this.transporter.verify((err) => {
-      if (err) {
-        this.logger.error(
-          `SMTP verify FAILED: ${(err as Error).message}`,
-        );
-      } else {
-        this.logger.log('SMTP transporter verified — ready to send emails via Gmail SMTP');
-      }
-    });
+    this.transport = candidate;
+    this.logger.log(`Mail provider: ${candidate.name} — ${candidate.describe()}`);
+
+    // Detached: a slow or failing probe must not hold up application boot.
+    void this.probe(candidate);
+  }
+
+  private build(provider: string): MailTransport | null {
+    switch (provider) {
+      case MailProvider.BREVO:
+        return new BrevoTransport();
+      case MailProvider.SMTP:
+        return new SmtpTransport();
+      default:
+        return null;
+    }
+  }
+
+  private async probe(transport: MailTransport): Promise<void> {
+    if (!transport.verify) return;
+    const problem = await transport.verify();
+    if (problem) {
+      this.logger.error(`${transport.name} verify FAILED: ${problem}`);
+    } else {
+      this.logger.log(`${transport.name} verified — ready to send emails.`);
+    }
   }
 
   private async send({ to, subject, html, text }: SendArgs): Promise<void> {
     const textBody = text || stripHtml(html);
 
-    if (this.transporter) {
+    if (this.transport) {
       try {
-        await this.transporter.sendMail({
-          from: ENV.MAIL_FROM || `BoostMe <${ENV.SMTP_USER || 'no-reply@boostme.app'}>`,
-          to,
-          subject,
-          html,
-          text: textBody,
-        });
-        this.logger.log(`Email sent to ${to} (${subject}) via Gmail SMTP`);
+        await this.transport.send({ to, subject, html, text: textBody });
+        this.logger.log(`Email sent to ${to} (${subject}) via ${this.transport.name}`);
         return;
       } catch (err) {
-        this.logger.error(`Failed to send mail to ${to} via SMTP: ${(err as Error).message}`);
+        this.logger.error(
+          `${this.transport.name} send failed for ${to}: ${(err as Error).message}`,
+        );
       }
     }
 
-    // Dev / Fallback log
-    this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${textBody}`);
+    // Undelivered. The dev fallback prints the body so a local run can read the
+    // code; in production that body is a one-time code in plaintext in the logs,
+    // so only the failure is recorded.
+    if (ENV.IS_PRODUCTION) {
+      this.logger.error(
+        `[MAIL:UNDELIVERED] to=${to} subject="${subject}" — ${this.transport ? 'send failed' : 'no provider configured'}`,
+      );
+    } else {
+      this.logger.warn(`[MAIL:FALLBACK] to=${to} subject="${subject}"\n${textBody}`);
+    }
   }
 
   async sendVerificationOtp(to: string, otp: string, name?: string) {

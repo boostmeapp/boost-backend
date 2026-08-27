@@ -103,6 +103,14 @@ export class ENV {
     return configService.get<number>('BULL_REDIS_PORT', this.REDIS_PORT);
   }
 
+  // Mail: which transport initialises and sends. 'brevo' | 'smtp'
+  static get MAIL_PROVIDER(): string {
+    return configService
+      .get<string>('MAIL_PROVIDER', 'smtp')
+      .trim()
+      .toLowerCase();
+  }
+
   // SMTP / Mail
   static get SMTP_HOST(): string {
     return configService.get<string>('SMTP_HOST', '');
