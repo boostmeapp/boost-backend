@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ENV } from '../../config';
-import { MailProvider, MailTransport } from './mail-transport.interface';
+import { MailProvider, MailStatus, MailTransport } from './mail-transport.interface';
 import { BrevoTransport } from './transports/brevo.transport';
 import { SmtpTransport } from './transports/smtp.transport';
 
@@ -18,33 +18,62 @@ export class MailerService implements OnModuleInit {
   /** The one transport MAIL_PROVIDER selected. Null when unusable — never a silent swap. */
   private transport: MailTransport | null = null;
 
+  private status: MailStatus = {
+    provider: '',
+    transport: null,
+    configured: false,
+    config: null,
+    verified: null,
+    detail: null,
+    checkedAt: null,
+  };
+
   onModuleInit() {
     const requested = ENV.MAIL_PROVIDER;
+    this.status.provider = requested;
 
     const candidate = this.build(requested);
     if (!candidate) {
-      this.logger.error(
+      const detail =
         `MAIL_PROVIDER="${requested}" is not recognised. Valid values: ` +
-          `${Object.values(MailProvider).join(', ')}. Emails will not be sent.`,
-      );
+        `${Object.values(MailProvider).join(', ')}.`;
+      this.status.detail = detail;
+      this.logger.error(`${detail} Emails will not be sent.`);
       return;
     }
+
+    this.status.transport = candidate.name;
 
     try {
       candidate.init();
     } catch (err) {
+      const detail =
+        `${candidate.name} is not configured: ${(err as Error).message}`;
+      this.status.detail = detail;
       this.logger.error(
-        `MAIL_PROVIDER=${requested} selected but ${candidate.name} is not configured: ` +
-          `${(err as Error).message}. Emails will not be sent.`,
+        `MAIL_PROVIDER=${requested} selected but ${detail}. Emails will not be sent.`,
       );
       return;
     }
 
     this.transport = candidate;
+    this.status.configured = true;
+    this.status.config = candidate.describe();
     this.logger.log(`Mail provider: ${candidate.name} — ${candidate.describe()}`);
 
     // Detached: a slow or failing probe must not hold up application boot.
     void this.probe(candidate);
+  }
+
+  /** Current transport and its last known health. Safe to expose — no secrets. */
+  getStatus(): MailStatus {
+    return { ...this.status };
+  }
+
+  /** Re-run the connectivity probe on demand, so a fix can be confirmed without a restart. */
+  async revalidate(): Promise<MailStatus> {
+    if (this.transport) await this.probe(this.transport);
+    return this.getStatus();
   }
 
   private build(provider: string): MailTransport | null {
@@ -60,7 +89,12 @@ export class MailerService implements OnModuleInit {
 
   private async probe(transport: MailTransport): Promise<void> {
     if (!transport.verify) return;
+
     const problem = await transport.verify();
+    this.status.verified = !problem;
+    this.status.detail = problem;
+    this.status.checkedAt = new Date().toISOString();
+
     if (problem) {
       this.logger.error(`${transport.name} verify FAILED: ${problem}`);
     } else {

@@ -1,12 +1,16 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { HealthService } from './health.service';
+import { MailerService } from '../mailer/mailer.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { SkipThrottle } from '@nestjs/throttler';
 
 @Controller('health')
 @SkipThrottle() // Health checks should not be rate limited
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {}
+  constructor(
+    private readonly healthService: HealthService,
+    private readonly mailerService: MailerService,
+  ) {}
 
   /**
    * Basic health check - returns OK if service is running
@@ -47,5 +51,22 @@ export class HealthController {
   @Get('detailed')
   async detailed() {
     return this.healthService.checkDetailed();
+  }
+
+  /**
+   * Which mail transport is live right now, and whether it is healthy.
+   * `?check=true` re-runs the connectivity probe instead of reporting the
+   * result cached at boot, so a config fix can be confirmed without a restart.
+   * Never returns the API key or SMTP password.
+   */
+  @Public()
+  @Get('mail')
+  async mail(@Query('check') check?: string) {
+    const status =
+      check === 'true' || check === '1'
+        ? await this.mailerService.revalidate()
+        : this.mailerService.getStatus();
+
+    return { ...status, timestamp: new Date().toISOString() };
   }
 }

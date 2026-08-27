@@ -10,6 +10,17 @@ export interface MailMessage {
   text: string;
 }
 
+/** Diagnostic snapshot. Never carries the API key or SMTP password. */
+export interface MailStatus {
+  provider: string;
+  transport: string | null;
+  configured: boolean;
+  config: string | null;
+  verified: boolean | null;
+  detail: string | null;
+  checkedAt: string | null;
+}
+
 export interface MailTransport {
   readonly name: string;
 
