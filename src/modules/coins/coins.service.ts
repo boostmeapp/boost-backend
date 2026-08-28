@@ -17,12 +17,12 @@ import { IapValidationService } from '../boost/iap-validation.service';
 
 // Default coin packs seeded on first boot (prices are set in the stores).
 const DEFAULT_COIN_PACKAGES = [
-  { key: '70_coins', title: '70 Coins', coins: 70, bonusCoins: 0, iosProductId: '70_coins', androidProductId: '70_coins', priceLabel: '$0.99', sortOrder: 1 },
-  { key: '350_coins', title: '350 Coins', coins: 350, bonusCoins: 0, iosProductId: '350_coins', androidProductId: '350_coins', priceLabel: '$4.99', sortOrder: 2 },
-  { key: '700_coins', title: '700 Coins', coins: 700, bonusCoins: 35, iosProductId: '700_coins', androidProductId: '700_coins', priceLabel: '$9.99', sortOrder: 3 },
-  { key: '1400_coins', title: '1400 Coins', coins: 1400, bonusCoins: 100, iosProductId: '1400_coins', androidProductId: '1400_coins', priceLabel: '$19.99', sortOrder: 4 },
-  { key: '3500_coins', title: '3500 Coins', coins: 3500, bonusCoins: 350, iosProductId: '3500_coins', androidProductId: '3500_coins', priceLabel: '$49.99', sortOrder: 5 },
-  { key: '7000_coins', title: '7000 Coins', coins: 7000, bonusCoins: 1000, iosProductId: '7000_coins', androidProductId: '7000_coins', priceLabel: '$99.99', sortOrder: 6 },
+  { key: '70_coins', title: '70 Coins', coins: 70, bonusCoins: 0, iosProductId: '70_coins', androidProductId: 'boostra_70_coins', priceLabel: '$0.99', sortOrder: 1 },
+  { key: '350_coins', title: '350 Coins', coins: 350, bonusCoins: 0, iosProductId: '350_coins', androidProductId: 'boostra_350_coins', priceLabel: '$4.99', sortOrder: 2 },
+  { key: '700_coins', title: '700 Coins', coins: 700, bonusCoins: 35, iosProductId: '700_coins', androidProductId: 'boostra_700_coins', priceLabel: '$9.99', sortOrder: 3 },
+  { key: '1400_coins', title: '1400 Coins', coins: 1400, bonusCoins: 100, iosProductId: '1400_coins', androidProductId: 'boostra_1400_coins', priceLabel: '$19.99', sortOrder: 4 },
+  { key: '3500_coins', title: '3500 Coins', coins: 3500, bonusCoins: 350, iosProductId: '3500_coins', androidProductId: 'boostra_3500_coins', priceLabel: '$49.99', sortOrder: 5 },
+  { key: '7000_coins', title: '7000 Coins', coins: 7000, bonusCoins: 1000, iosProductId: '7000_coins', androidProductId: 'boostra_7000_coins', priceLabel: '$99.99', sortOrder: 6 },
 ];
 
 @Injectable()
