@@ -32,6 +32,7 @@ import { MailerModule } from './modules/mailer/mailer.module';
 import { ModerationModule } from './modules/moderation/moderation.module';
 import { CoinsModule } from './modules/coins/coins.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -113,6 +114,7 @@ ConfigModule.forRoot({
     CoinsModule,
     AdminModule,
     ChatModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [

@@ -181,6 +181,61 @@ export class MailerService implements OnModuleInit {
     });
   }
 
+  /**
+   * Deliver a support request to the ADMIN_EMAILS inbox. Returns false when
+   * there is nowhere to send it, so the caller can tell the user honestly.
+   */
+  async sendSupportRequest(args: {
+    type: 'report' | 'contact';
+    category: string;
+    message: string;
+    fromEmail: string;
+    fromName?: string;
+    userId: string;
+  }): Promise<boolean> {
+    const recipients = ENV.ADMIN_EMAILS;
+    if (!recipients.length) {
+      this.logger.error(
+        '[SUPPORT] ADMIN_EMAILS is empty — support request could not be delivered.',
+      );
+      return false;
+    }
+    if (!this.transport) {
+      this.logger.error('[SUPPORT] No mail transport configured.');
+      return false;
+    }
+
+    const heading = args.type === 'report' ? 'Problem report' : 'Support enquiry';
+    const subject = `${ENV.APP_NAME} ${heading}: ${args.category}`;
+    const html = supportTemplate({
+      heading,
+      category: args.category,
+      message: args.message,
+      fromEmail: args.fromEmail,
+      fromName: args.fromName,
+      userId: args.userId,
+    });
+    const text = stripHtml(html);
+
+    // One send per recipient: a single bad address must not lose the rest.
+    const results = await Promise.all(
+      recipients.map(async (to) => {
+        try {
+          await this.transport!.send({ to, subject, html, text });
+          this.logger.log(`Support request sent to ${to} (${subject})`);
+          return true;
+        } catch (err) {
+          this.logger.error(
+            `[SUPPORT] send failed for ${to}: ${(err as Error).message}`,
+          );
+          return false;
+        }
+      }),
+    );
+
+    return results.some(Boolean);
+  }
+
   async sendAccountDeletedNotice(to: string) {
     await this.send({
       to,
@@ -247,6 +302,41 @@ function resetTemplate(args: { resetUrl: string; otp: string }): string {
     </div>
     <p style="margin:0;color:#7A8A92;font-size:12px;word-break:break-all;">If the button doesn't work, paste this URL into your browser:<br/>${args.resetUrl}</p>
   `);
+}
+
+function supportTemplate(args: {
+  heading: string;
+  category: string;
+  message: string;
+  fromEmail: string;
+  fromName?: string;
+  userId: string;
+}): string {
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:6px 12px 6px 0;color:#7A8A92;font-size:13px;white-space:nowrap;">${label}</td>
+      <td style="padding:6px 0;color:#E6EEF2;font-size:13px;">${escapeHtml(value)}</td>
+    </tr>`;
+
+  return shell(`
+    <h2 style="font-size:20px;color:#FFFFFF;margin:0 0 16px;">${args.heading}</h2>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
+      ${row('Category', args.category)}
+      ${row('From', args.fromName ? `${args.fromName} <${args.fromEmail}>` : args.fromEmail)}
+      ${row('User ID', args.userId)}
+    </table>
+    <div style="padding:16px;background:#0F1C22;border:1px solid #25404C;border-radius:10px;color:#C4D0D6;white-space:pre-wrap;">${escapeHtml(args.message)}</div>
+    <p style="margin:20px 0 0;color:#7A8A92;font-size:12px;">Reply directly to ${escapeHtml(args.fromEmail)} to respond to this user.</p>
+  `);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function noticeTemplate(args: { title: string; message: string }): string {

@@ -185,6 +185,14 @@ export class ENV {
     return configService.get<string>('APP_NAME', 'BoostMe');
   }
 
+  static get ADMIN_EMAILS(): string[] {
+    return configService
+      .get<string>('ADMIN_EMAILS', '')
+      .split(',')
+      .map((email) => email.trim())
+      .filter(Boolean);
+  }
+
   static get FRONTEND_URL(): string {
     return configService.get<string>('FRONTEND_URL', 'https://boostme.app');
   }
