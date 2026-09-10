@@ -100,13 +100,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    const message = await this.chatService.createMessage(
-      senderId,
-      data.recipientId,
-      data.conversationId,
-      data.text,
-      data.image,
-    );
+    let message: any;
+    try {
+      message = await this.chatService.createMessage(
+        senderId,
+        data.recipientId,
+        data.conversationId,
+        data.text,
+        data.image,
+      );
+    } catch (err) {
+      // A rejected send must reach the sender, not disappear into the socket.
+      client.emit('messageError', {
+        conversationId: data.conversationId,
+        message:
+          (err as Error)?.message ||
+          'Your message could not be sent.',
+      });
+      return;
+    }
 
     // Emit to conversation room
     this.server.to(`conv_${data.conversationId}`).emit('newMessage', message);

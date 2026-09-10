@@ -52,9 +52,56 @@ export class ChatService {
   /**
    * Get or create a 1-on-1 conversation between two users
    */
+  /**
+   * A block cuts messaging both ways: the blocker should not be able to message
+   * the person they blocked either, or the conversation becomes one-sided.
+   */
+  async isBlockedBetween(userA: string, userB: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(userA) || !Types.ObjectId.isValid(userB)) {
+      return false;
+    }
+    const a = new Types.ObjectId(userA);
+    const b = new Types.ObjectId(userB);
+
+    const found = await this.userModel
+      .findOne({
+        $or: [
+          { _id: a, blockedUsers: b },
+          { _id: b, blockedUsers: a },
+        ],
+      })
+      .select('_id')
+      .lean();
+
+    return !!found;
+  }
+
+  /** The other participant in a two-person conversation. */
+  private async getOtherParticipantId(
+    conversationId: string,
+    userId: string,
+  ): Promise<string | null> {
+    const conversation = await this.conversationModel
+      .findById(conversationId)
+      .select('participants')
+      .lean();
+    if (!conversation) return null;
+
+    const other = (conversation.participants as Types.ObjectId[]).find(
+      (p) => p.toString() !== userId,
+    );
+    return other ? other.toString() : null;
+  }
+
   async getOrCreateConversation(currentUserId: string, targetUserId: string) {
     if (currentUserId === targetUserId) {
       throw new ForbiddenException('Cannot start a chat with yourself');
+    }
+
+    if (await this.isBlockedBetween(currentUserId, targetUserId)) {
+      throw new ForbiddenException(
+        'You cannot start a conversation with this user.',
+      );
     }
 
     const targetUser = await this.userModel.findById(targetUserId);
@@ -226,11 +273,17 @@ export class ChatService {
       }),
     );
 
+    const otherId = await this.getOtherParticipantId(conversationId, userId);
+    const isBlocked = otherId
+      ? await this.isBlockedBetween(userId, otherId)
+      : false;
+
     return {
       data: messagesWithSignedUrls.reverse(),
       total,
       page,
       totalPages: Math.ceil(total / limit),
+      isBlocked,
     };
   }
 
@@ -244,6 +297,12 @@ export class ChatService {
     text: string,
     image?: string,
   ) {
+    if (await this.isBlockedBetween(senderId, recipientId)) {
+      throw new ForbiddenException(
+        'You can no longer send messages in this conversation.',
+      );
+    }
+
     const senderObj = new Types.ObjectId(senderId);
     const recipientObj = new Types.ObjectId(recipientId);
     const convObj = new Types.ObjectId(conversationId);
@@ -355,6 +414,13 @@ export class ChatService {
 
     if (String(message.sender) !== String(userId)) {
       throw new ForbiddenException('You can only edit your own messages');
+    }
+
+    if (String(message.recipient) &&
+        (await this.isBlockedBetween(userId, String(message.recipient)))) {
+      throw new ForbiddenException(
+        'You can no longer send messages in this conversation.',
+      );
     }
 
     message.text = text.trim();
