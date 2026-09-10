@@ -7,6 +7,7 @@ export interface CommentResponse {
   parentComment?: Types.ObjectId | null;
   likeCount: number;
   isLiked?: boolean;
+  isReported?: boolean;
   createdAt: Date;
   user: {
     _id: string;

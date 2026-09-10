@@ -7,6 +7,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Video } from 'src/database/schemas';
 import { CommentLike } from '../../database/schemas/comment-like/comment-like.schema';
+import {
+  Report,
+  ReportContentType,
+  ReportStatus,
+} from '../../database/schemas/report/report.schema';
 import { Comment } from './comment.schema';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CommentResponse } from './interfaces/comment.interface';
@@ -20,6 +25,7 @@ export class CommentsService {
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(CommentLike.name)
     private commentLikeModel: Model<CommentLike>,
+    @InjectModel(Report.name) private reportModel: Model<Report>,
   ) {}
 
   /**
@@ -74,6 +80,26 @@ export class CommentsService {
     );
 
     return { liked: !existing, likeCount };
+  }
+
+  /** Which of these comments the user has an open report against. */
+  private async reportedCommentIds(
+    userId: string | undefined,
+    commentIds: Types.ObjectId[],
+  ): Promise<Set<string>> {
+    if (!userId || !commentIds.length) return new Set();
+
+    const reports = await this.reportModel
+      .find({
+        reporter: new Types.ObjectId(userId),
+        contentType: ReportContentType.COMMENT,
+        contentId: { $in: commentIds },
+        status: { $in: [ReportStatus.PENDING, ReportStatus.REVIEWING] },
+      })
+      .select('contentId')
+      .lean();
+
+    return new Set(reports.map((r) => r.contentId.toString()));
   }
 
   /** Which of these comments the user has liked, as a set of id strings. */
@@ -140,23 +166,25 @@ async getVideoComments(
     .limit(limit)
     .lean();
 
-  return this.withIsLiked(comments, userId);
+  return this.withUserState(comments, userId);
 }
 
-/** Attach isLiked for the requesting user to a list of lean comments. */
-private async withIsLiked(
+/** Attach the requesting user's like and report state to a list of lean comments. */
+private async withUserState(
   comments: any[],
   userId?: string,
 ): Promise<CommentResponse[]> {
-  const liked = await this.likedCommentIds(
-    userId,
-    comments.map((c) => c._id as Types.ObjectId),
-  );
+  const ids = comments.map((c) => c._id as Types.ObjectId);
+  const [liked, reported] = await Promise.all([
+    this.likedCommentIds(userId, ids),
+    this.reportedCommentIds(userId, ids),
+  ]);
 
   return comments.map((c) => ({
     ...c,
     likeCount: c.likeCount || 0,
     isLiked: liked.has(c._id.toString()),
+    isReported: reported.has(c._id.toString()),
   })) as unknown as CommentResponse[];
 }
 
@@ -172,7 +200,7 @@ private async withIsLiked(
     .sort({ createdAt: 1 })
     .lean();
 
-  return this.withIsLiked(replies, userId);
+  return this.withUserState(replies, userId);
 }
 
 

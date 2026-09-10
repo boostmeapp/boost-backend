@@ -8,6 +8,10 @@ import {
   CommentLike,
   CommentLikeSchema,
 } from '../../database/schemas/comment-like/comment-like.schema';
+import {
+  Report,
+  ReportSchema,
+} from '../../database/schemas/report/report.schema';
 
 @Module({
   imports: [
@@ -15,6 +19,7 @@ import {
       { name: Comment.name, schema: CommentSchema },
       { name: Video.name, schema: VideoSchema },
       { name: CommentLike.name, schema: CommentLikeSchema },
+      { name: Report.name, schema: ReportSchema },
     ]),
   ],
   controllers: [CommentsController],
