@@ -108,8 +108,17 @@ async getProfile(viewerId: string | null, profileUserId: string) {
 
   // 3️⃣ Viewer Relationship
   let isFollowing = false;
+  let isBlocked = false;
 
   if (viewerObjectId) {
+    const viewer = await this.userModel
+      .findById(viewerObjectId)
+      .select('blockedUsers')
+      .lean();
+    isBlocked = (viewer?.blockedUsers || []).some(
+      (id) => id.toString() === profileUserId,
+    );
+
     const follow = await this.followModel.findOne({
       follower: viewerObjectId,
       following: profileObjectId
@@ -136,6 +145,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
       videos
     },
     isFollowing,
+    isBlocked,
     gridVideos
   };
 }

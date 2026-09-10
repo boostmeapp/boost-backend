@@ -149,11 +149,19 @@ export class ModerationService {
     const target = await this.userModel.findById(targetUserId).select('_id').lean();
     if (!target) throw new NotFoundException('User not found');
 
-    await this.userModel.updateOne(
+    const result = await this.userModel.updateOne(
       { _id: new Types.ObjectId(userId) },
       { $addToSet: { blockedUsers: new Types.ObjectId(targetUserId) } },
     );
-    return { success: true, message: 'User blocked' };
+
+    // $addToSet is idempotent; modifiedCount tells us whether it was new.
+    const alreadyBlocked = result.modifiedCount === 0;
+
+    return {
+      success: true,
+      alreadyBlocked,
+      message: alreadyBlocked ? 'User already blocked' : 'User blocked',
+    };
   }
 
   async unblockUser(userId: string, targetUserId: string) {
