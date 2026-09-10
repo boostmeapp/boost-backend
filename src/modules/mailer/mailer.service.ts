@@ -236,6 +236,54 @@ export class MailerService implements OnModuleInit {
     return results.some(Boolean);
   }
 
+  /**
+   * Email a user their own data export as a PDF. Returns false when the
+   * transport cannot deliver it, so the caller can say so.
+   */
+  async sendDataExport(
+    to: string,
+    pdf: Buffer,
+    name?: string,
+  ): Promise<boolean> {
+    if (!this.transport) {
+      this.logger.error('[EXPORT] No mail transport configured.');
+      return false;
+    }
+
+    const filename = `boostra-data-export-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const html = noticeTemplate({
+      title: 'Your data export',
+      message:
+        `Hi${name ? ' ' + name : ''}, your ${ENV.APP_NAME} data export is attached. ` +
+        'It lists your profile, videos, comments and account activity. ' +
+        'Open the attached PDF to read it. ' +
+        'If you did not request this, please change your password.',
+    });
+
+    try {
+      await this.transport.send({
+        to,
+        subject: `${ENV.APP_NAME} — Your data export`,
+        html,
+        text: stripHtml(html),
+        attachments: [
+          {
+            filename,
+            content: pdf.toString('base64'),
+            contentType: 'application/pdf',
+          },
+        ],
+      });
+      this.logger.log(`Data export sent to ${to}`);
+      return true;
+    } catch (err) {
+      this.logger.error(
+        `[EXPORT] send failed for ${to}: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
   async sendAccountDeletedNotice(to: string) {
     await this.send({
       to,
