@@ -174,13 +174,17 @@ export class VerificationService {
   async confirmAccountDeletion(
     userId: string,
     otp: string,
-    password: string,
+    password?: string,
   ): Promise<{ deleted: true }> {
     const user = await this.userModel.findById(userId).select('+password');
     if (!user) throw new NotFoundException('User not found');
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) throw new UnauthorizedException('Incorrect password');
+    // The emailed one-time code is the proof of ownership here. A password is
+    // only re-checked if the caller supplied one.
+    if (password) {
+      const ok = await bcrypt.compare(password, user.password);
+      if (!ok) throw new UnauthorizedException('Incorrect password');
+    }
 
     await this.consumeOtp(user, VerificationTokenType.ACCOUNT_DELETE, otp);
 
