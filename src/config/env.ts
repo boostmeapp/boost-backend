@@ -182,7 +182,7 @@ export class ENV {
   }
 
   static get APP_NAME(): string {
-    return configService.get<string>('APP_NAME', 'BoostMe');
+    return configService.get<string>('APP_NAME', 'Boostra');
   }
 
   static get ADMIN_EMAILS(): string[] {
@@ -199,6 +199,7 @@ export class ENV {
 
   // Deep-link scheme for mobile reset password (expo-router)
   static get APP_DEEP_LINK_SCHEME(): string {
-    return configService.get<string>('APP_DEEP_LINK_SCHEME', 'boostme');
+    // Must match `scheme` in the app's app.config.js, or reset links open nothing.
+    return configService.get<string>('APP_DEEP_LINK_SCHEME', 'boostra');
   }
 }
