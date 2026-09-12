@@ -244,6 +244,12 @@ async findByEmail(email: string): Promise<User | null> {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'This account signs in with Google. Use Forgot password to set a password first.',
+      );
+    }
+
     const isPasswordValid = await bcrypt.compare(
       changePasswordDto.currentPassword,
       user.password,

@@ -1,7 +1,13 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { TokenService, AuthResponse } from './token.service';
-import { User } from '../../database/schemas/user/user.schema';
+import { AuthProvider, User } from '../../database/schemas/user/user.schema';
+import { GoogleAuthService } from './google-auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
@@ -19,8 +25,105 @@ export class AuthService {
     private readonly tokenService: TokenService,
     @InjectModel(Follow.name)
     private readonly followModel: Model<Follow>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<User>,
     private readonly verificationService: VerificationService,
+    private readonly googleAuthService: GoogleAuthService,
   ) { }
+
+  /**
+   * Sign in (or sign up) with a Google ID token.
+   *
+   * The email address is the identity: an account that already exists for it is
+   * linked and reused, never duplicated.
+   */
+  async loginWithGoogle(idToken: string): Promise<AuthResponse> {
+    const identity = await this.googleAuthService.verify(idToken);
+
+    // googleId first (fastest, already linked), then email (first-time link).
+    let user: User | null = await this.userModel.findOne({
+      googleId: identity.googleId,
+    });
+
+    if (!user) {
+      user = await this.userModel.findOne({ email: identity.email });
+    }
+
+    if (user) {
+      this.assertUsable(user);
+
+      if (!user.googleId) {
+        // First Google sign-in for an existing password account. Safe to link:
+        // Google asserted the address is verified, proving ownership.
+        user.googleId = identity.googleId;
+        this.logger.log(`Linked Google to existing account ${user.email}`);
+      }
+
+      if (!user.authProviders?.includes(AuthProvider.GOOGLE)) {
+        user.authProviders = [
+          ...(user.authProviders || []),
+          AuthProvider.GOOGLE,
+        ];
+      }
+
+      // Google verified the address, so an unverified account becomes verified.
+      if (!user.isEmailVerified) {
+        user.isEmailVerified = true;
+        user.emailVerifiedAt = new Date();
+      }
+
+      // Only fill blanks — never overwrite what the user has already set.
+      if (!user.firstName && identity.firstName) {
+        user.firstName = identity.firstName;
+      }
+      if (!user.lastName && identity.lastName) {
+        user.lastName = identity.lastName;
+      }
+
+      await user.save();
+    } else {
+      user = await this.userModel.create({
+        email: identity.email,
+        googleId: identity.googleId,
+        firstName: identity.firstName,
+        lastName: identity.lastName,
+        // No password: this account signs in with Google until the user sets
+        // one through the forgot-password flow.
+        isEmailVerified: true,
+        emailVerifiedAt: new Date(),
+        authProviders: [AuthProvider.GOOGLE],
+      });
+      this.logger.log(`Created account from Google sign-in: ${user.email}`);
+    }
+
+    await this.usersService.ensureAdminRole(user);
+
+    const [followers, following] = await Promise.all([
+      this.followModel.countDocuments({ following: user._id }),
+      this.followModel.countDocuments({ follower: user._id }),
+    ]);
+
+    const tokens = await this.tokenService.generateTokens(user);
+
+    return {
+      user: {
+        ...user.toObject(),
+        followerCount: followers,
+        followingCount: following,
+      },
+      ...tokens,
+    };
+  }
+
+  /** Same account-state checks a password login performs. */
+  private assertUsable(user: User) {
+    if (user.isBanned) {
+      throw new ForbiddenException('This account has been suspended.');
+    }
+    if (!user.isActive) {
+      throw new UnauthorizedException('This account is no longer active.');
+    }
+  }
 
   // ✅ LOGIN VALIDATION (PRODUCTION SAFE)
   async validateUser(email: string, password: string): Promise<User | null> {

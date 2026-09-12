@@ -197,6 +197,30 @@ export class ENV {
     return configService.get<string>('FRONTEND_URL', 'https://boostme.app');
   }
 
+  // Google Sign-In: every client ID a valid ID token may be issued for. The app
+  // normally requests the web audience, but a native iOS/Android flow can return
+  // its own, so all three are accepted.
+  static get GOOGLE_WEB_CLIENT_ID(): string {
+    return configService.get<string>('GOOGLE_WEB_CLIENT_ID', '');
+  }
+
+  static get GOOGLE_IOS_CLIENT_ID(): string {
+    return configService.get<string>('GOOGLE_IOS_CLIENT_ID', '');
+  }
+
+  static get GOOGLE_ANDROID_CLIENT_ID(): string {
+    return configService.get<string>('GOOGLE_ANDROID_CLIENT_ID', '');
+  }
+
+  /** Audiences accepted when verifying a Google ID token. */
+  static get GOOGLE_CLIENT_IDS(): string[] {
+    return [
+      this.GOOGLE_WEB_CLIENT_ID,
+      this.GOOGLE_IOS_CLIENT_ID,
+      this.GOOGLE_ANDROID_CLIENT_ID,
+    ].filter(Boolean);
+  }
+
   // Deep-link scheme for mobile reset password (expo-router)
   static get APP_DEEP_LINK_SCHEME(): string {
     // Must match `scheme` in the app's app.config.js, or reset links open nothing.

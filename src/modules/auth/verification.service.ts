@@ -150,6 +150,11 @@ export class VerificationService {
   async verifyPassword(userId: string, password: string): Promise<{ valid: true }> {
     const user = await this.userModel.findById(userId).select('+password');
     if (!user) throw new NotFoundException('User not found');
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'This account signs in with Google. Use Forgot password to set a password first.',
+      );
+    }
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) throw new UnauthorizedException('Incorrect password');
     return { valid: true };
@@ -181,7 +186,7 @@ export class VerificationService {
 
     // The emailed one-time code is the proof of ownership here. A password is
     // only re-checked if the caller supplied one.
-    if (password) {
+    if (password && user.password) {
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) throw new UnauthorizedException('Incorrect password');
     }
