@@ -6,6 +6,8 @@ export interface CommentResponse {
   video: Types.ObjectId;
   parentComment?: Types.ObjectId | null;
   likeCount: number;
+  isLiked?: boolean;
+  isReported?: boolean;
   createdAt: Date;
   user: {
     _id: string;

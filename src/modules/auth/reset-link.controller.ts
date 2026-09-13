@@ -18,9 +18,9 @@ export class ResetLinkController {
   ): string {
     const safeToken = (token || '').replace(/[^a-zA-Z0-9_-]/g, '');
     const safeEmail = encodeURIComponent(email || '');
-    const scheme = ENV.APP_DEEP_LINK_SCHEME || 'boostme';
+    const scheme = ENV.APP_DEEP_LINK_SCHEME || 'boostra';
     const deepLink = `${scheme}://reset-password?token=${safeToken}&email=${safeEmail}`;
-    const appName = ENV.APP_NAME || 'BoostMe';
+    const appName = ENV.APP_NAME || 'Boostra';
 
     return `<!doctype html><html><head>
 <meta charset="utf-8" />
@@ -45,10 +45,14 @@ export class ResetLinkController {
   <p class="muted">If the button does not work, copy this link into the app: <br/>${deepLink}</p>
 </div>
 <script>
-  // Try to auto-open the app on mobile
-  setTimeout(function () {
-    window.location.href = ${JSON.stringify(deepLink)};
-  }, 400);
+  // Only attempt the deep link on a device that could have the app. On desktop
+  // the browser has nothing to hand the scheme to and shows an error dialog.
+  (function () {
+    if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+    setTimeout(function () {
+      window.location.href = ${JSON.stringify(deepLink)};
+    }, 400);
+  })();
 </script>
 </body></html>`;
   }

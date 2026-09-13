@@ -7,13 +7,27 @@ export enum UserRole {
   ADMIN = 'admin',
 }
 
+export enum AuthProvider {
+  PASSWORD = 'password',
+  GOOGLE = 'google',
+}
+
 @Schema({ timestamps: true, collection: 'users' })
 export class User extends Document {
   @Prop({ required: true, unique: true, lowercase: true, trim: true })
   email: string;
 
-  @Prop({ required: true, select: false })
-  password: string;
+  // Optional: an account created through Google has no password until the user
+  // sets one via the forgot-password flow.
+  @Prop({ select: false })
+  password?: string;
+
+  // Google's `sub` claim. Sparse so the unique index ignores password-only users.
+  @Prop({ index: true, sparse: true, unique: true })
+  googleId?: string;
+
+  @Prop({ type: [String], enum: AuthProvider, default: [AuthProvider.PASSWORD] })
+  authProviders: AuthProvider[];
 
   @Prop()
   firstName?: string;
@@ -94,6 +108,7 @@ export class User extends Document {
   coinBalance: number;
 
   async validatePassword(password: string): Promise<boolean> {
+    if (!this.password) return false;
     return bcrypt.compare(password, this.password);
   }
 }
@@ -103,7 +118,7 @@ UserSchema.set('autoIndex', true);
 
 // Hash password before saving
 UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password') || !this.password) return next();
 
   try {
     const salt = await bcrypt.genSalt(10);
@@ -118,6 +133,7 @@ UserSchema.pre('save', async function (next) {
 UserSchema.methods.validatePassword = async function (
   password: string,
 ): Promise<boolean> {
+  if (!this.password) return false;
   return bcrypt.compare(password, this.password);
 };
 

@@ -12,6 +12,7 @@ import { VerificationService } from './verification.service';
 import {
   RegisterDto,
   LoginDto,
+  GoogleLoginDto,
   RefreshTokenDto,
   EmailDto,
   VerifyEmailDto,
@@ -41,6 +42,13 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('google')
+  async loginWithGoogle(@Body() dto: GoogleLoginDto) {
+    return this.authService.loginWithGoogle(dto.idToken);
   }
 
   @Public()

@@ -108,8 +108,17 @@ async getProfile(viewerId: string | null, profileUserId: string) {
 
   // 3️⃣ Viewer Relationship
   let isFollowing = false;
+  let isBlocked = false;
 
   if (viewerObjectId) {
+    const viewer = await this.userModel
+      .findById(viewerObjectId)
+      .select('blockedUsers')
+      .lean();
+    isBlocked = (viewer?.blockedUsers || []).some(
+      (id) => id.toString() === profileUserId,
+    );
+
     const follow = await this.followModel.findOne({
       follower: viewerObjectId,
       following: profileObjectId
@@ -136,6 +145,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
       videos
     },
     isFollowing,
+    isBlocked,
     gridVideos
   };
 }
@@ -164,7 +174,7 @@ async findByEmail(email: string): Promise<User | null> {
         {
           new: true,
           select:
-            'email firstName lastName username profileImage bio gender followerCount followingCount videoCount role',
+            'email firstName lastName username profileImage bio gender dob followerCount followingCount videoCount role',
         },
       )
       .exec();
@@ -232,6 +242,12 @@ async findByEmail(email: string): Promise<User | null> {
 
     if (!user) {
       throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'This account signs in with Google. Use Forgot password to set a password first.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(

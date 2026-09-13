@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthService } from './auth.service';
+import { GoogleAuthService } from './google-auth.service';
 import { AuthController } from './auth.controller';
 import { ResetLinkController } from './reset-link.controller';
 import { TokenService } from './token.service';
@@ -45,6 +46,7 @@ import { Follow, FollowSchema } from '../../database/schemas/follow/follow.schem
   controllers: [AuthController, ResetLinkController],
   providers: [
     AuthService,
+    GoogleAuthService,
     TokenService,
     VerificationService,
     LocalStrategy,

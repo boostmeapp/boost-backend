@@ -69,6 +69,14 @@ export class BrevoTransport implements MailTransport {
         subject: message.subject,
         htmlContent: message.html,
         textContent: message.text,
+        ...(message.attachments?.length
+          ? {
+              attachment: message.attachments.map((a) => ({
+                name: a.filename,
+                content: a.content,
+              })),
+            }
+          : {}),
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });

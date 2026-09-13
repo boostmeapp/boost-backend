@@ -3,11 +3,19 @@ export enum MailProvider {
   SMTP = 'smtp',
 }
 
+/** A file sent with the message. `content` is base64-encoded. */
+export interface MailAttachment {
+  filename: string;
+  content: string;
+  contentType: string;
+}
+
 export interface MailMessage {
   to: string;
   subject: string;
   html: string;
   text: string;
+  attachments?: MailAttachment[];
 }
 
 /** Diagnostic snapshot. Never carries the API key or SMTP password. */
