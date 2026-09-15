@@ -197,6 +197,8 @@ export class UploadService {
         return `thumbnails/${userId}/${timestamp}-${randomId}.${extension}`;
       case UploadType.PROFILE_IMAGE:
         return `profiles/${userId}/${timestamp}-${randomId}.${extension}`;
+      case UploadType.COVER_IMAGE:
+        return `covers/${userId}/${timestamp}-${randomId}.${extension}`;
       case UploadType.CHAT_IMAGE:
         return `chat/${userId}/${timestamp}-${randomId}.${extension}`;
       default:
@@ -227,6 +229,7 @@ export class UploadService {
 
       case UploadType.THUMBNAIL:
       case UploadType.PROFILE_IMAGE:
+      case UploadType.COVER_IMAGE:
       case UploadType.CHAT_IMAGE:
         if (fileSize > this.MAX_IMAGE_UPLOAD_SIZE) {
           throw new BadRequestException(

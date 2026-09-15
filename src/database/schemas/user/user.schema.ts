@@ -88,6 +88,9 @@ export class User extends Document {
   profileImage?: string; // S3 / CDN URL
 
   @Prop()
+  coverImage?: string; // Optional profile cover/banner — S3 / CDN URL
+
+  @Prop()
   bio?: string;
   @Prop()
   dob?: Date;

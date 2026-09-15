@@ -91,7 +91,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
 
   // 1️⃣ User Profile Info
   const user = await this.userModel.findById(profileObjectId)
-    .select("firstName lastName username profileImage followerCount followingCount videoCount")
+    .select("firstName lastName username profileImage coverImage followerCount followingCount videoCount")
     .lean();
 
   if (!user) throw new NotFoundException("User not found");
@@ -174,7 +174,7 @@ async findByEmail(email: string): Promise<User | null> {
         {
           new: true,
           select:
-            'email firstName lastName username profileImage bio gender dob followerCount followingCount videoCount role',
+            'email firstName lastName username profileImage coverImage bio gender dob followerCount followingCount videoCount role',
         },
       )
       .exec();

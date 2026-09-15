@@ -78,6 +78,50 @@ export class UploadController {
     };
   }
 
+  // Optional profile cover/banner — same pipeline as the avatar above.
+  @Post('cover-image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 1 * 1024 * 1024 }, // 1MB — client compresses first
+      fileFilter: (_, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image files allowed'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadCoverImage(
+    @CurrentUser() user: User,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    // 1️⃣ Upload to S3
+    const { url } = await this.uploadService.uploadFile(
+      user.id,
+      UploadType.COVER_IMAGE,
+      file,
+    );
+
+    // 2️⃣ Save URL on the user
+    const updatedUser = await this.usersService.update(user.id, {
+      coverImage: url,
+    });
+
+    return {
+      success: true,
+      url,
+      user: updatedUser,
+    };
+  }
+
   // ✅ DEDICATED ENDPOINT FOR CHAT / GENERAL IMAGES
   @Post('image')
   @UseInterceptors(

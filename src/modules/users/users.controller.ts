@@ -52,6 +52,16 @@ async updateProfileImage(
   return this.usersService.update(user.id, { profileImage });
 }
 
+// Set/clear the optional cover image by URL. Send an empty string to remove it.
+@Patch('me/cover-image')
+@UseGuards(JwtAuthGuard)
+async updateCoverImage(
+  @CurrentUser() user: User,
+  @Body('coverImage') coverImage: string,
+) {
+  return this.usersService.update(user.id, { coverImage });
+}
+
 
   @Get()
   @Roles(UserRole.ADMIN)

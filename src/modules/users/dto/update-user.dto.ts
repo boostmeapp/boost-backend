@@ -36,6 +36,12 @@ export class UpdateUserDto {
   @MaxLength(2048)
   profileImage?: string;
 
+  // Optional cover/banner image — full public S3 URL, same as profileImage.
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  coverImage?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(30)

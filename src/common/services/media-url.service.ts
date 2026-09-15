@@ -40,6 +40,10 @@ export class MediaUrlService {
   toPublicUser(user?: any): any {
     if (!user) return null;
     const plain = typeof user.toObject === 'function' ? user.toObject() : user;
-    return { ...plain, profileImage: this.toUrl(plain.profileImage) };
+    return {
+      ...plain,
+      profileImage: this.toUrl(plain.profileImage),
+      coverImage: this.toUrl(plain.coverImage),
+    };
   }
 }
