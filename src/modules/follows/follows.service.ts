@@ -9,12 +9,15 @@ import type { PaginateModel } from 'mongoose';
 import { Model, Types } from 'mongoose';
 import { Follow } from '../../database/schemas/follow/follow.schema';
 import { User } from '../../database/schemas/user/user.schema';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
 
 @Injectable()
 export class FollowsService {
   constructor(
     @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
     @InjectModel(User.name) private userModel: Model<User>,
+    private readonly notificationService: NotificationService,
   ) { }
 
   // Follow a user
@@ -59,6 +62,27 @@ export class FollowsService {
       },
     },
   ]);
+
+  // Best-effort: notify() swallows its own errors, so a push problem can never
+  // undo a follow that already committed.
+  const follower = await this.userModel
+    .findById(followerObj)
+    .select('firstName lastName username')
+    .lean();
+
+  const actorName =
+    `${follower?.firstName ?? ''} ${follower?.lastName ?? ''}`.trim() ||
+    follower?.username ||
+    'Someone';
+
+  void this.notificationService.notify({
+    users: followingId,
+    actor: followerId,
+    type: NotificationType.Follow,
+    title: actorName,
+    body: `${actorName} started following you`,
+    metadata: { userId: followerId },
+  });
 
   return { message: 'Followed successfully' };
 }

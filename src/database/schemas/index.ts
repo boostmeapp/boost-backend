@@ -12,3 +12,5 @@ export * from './report/report.schema';
 export * from './comment-like/comment-like.schema';
 export * from './chat/conversation.schema';
 export * from './chat/message.schema';
+export * from './notification/notification.schema';
+export * from './notification/device-token.schema';

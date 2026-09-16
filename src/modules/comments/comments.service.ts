@@ -5,7 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Video } from 'src/database/schemas';
+import { User, Video } from 'src/database/schemas';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
 import { CommentLike } from '../../database/schemas/comment-like/comment-like.schema';
 import {
   Report,
@@ -26,6 +28,8 @@ export class CommentsService {
     @InjectModel(CommentLike.name)
     private commentLikeModel: Model<CommentLike>,
     @InjectModel(Report.name) private reportModel: Model<Report>,
+    @InjectModel(User.name) private userModel: Model<User>,
+    private readonly notificationService: NotificationService,
   ) {}
 
   /**
@@ -120,6 +124,33 @@ export class CommentsService {
     return new Set(likes.map((like) => like.commentId.toString()));
   }
 
+  /** Tells the video owner about a new comment. Errors are swallowed. */
+  private async notifyComment(actorId: string, video: any, content: string) {
+    if (!video?.user) return;
+
+    const actor = await this.userModel
+      .findById(actorId)
+      .select('firstName lastName username')
+      .lean();
+
+    const actorName =
+      `${actor?.firstName ?? ''} ${actor?.lastName ?? ''}`.trim() ||
+      actor?.username ||
+      'Someone';
+
+    void this.notificationService.notify({
+      users: String(video.user),
+      actor: actorId,
+      type: NotificationType.Comment,
+      title: actorName,
+      body: `${actorName} commented on your post`,
+      metadata: {
+        videoId: String(video._id),
+        preview: content.slice(0, 120),
+      },
+    });
+  }
+
   async create(userId: string, dto: CreateCommentDto) {
     // Content filter: reject objectionable language in comments
     if (!scanText(dto.content).clean) {
@@ -143,6 +174,8 @@ export class CommentsService {
       { _id: dto.videoId },
       { $inc: { commentCount: 1 } },
     );
+
+    void this.notifyComment(userId, video, dto.content);
 
     return comment;
   }

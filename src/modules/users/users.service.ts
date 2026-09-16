@@ -11,6 +11,8 @@ import * as bcrypt from 'bcrypt';
 import { User, UserRole } from '../../database/schemas/user/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FollowsService } from '../follows/follows.service';
 import { Video } from '../../database/schemas/video/video.schema';
@@ -25,6 +27,7 @@ constructor(
   @InjectModel(Video.name) private videoModel: Model<Video>,
   @InjectModel(Follow.name) private followModel: Model<Follow>,
   private readonly mediaUrl: MediaUrlService,
+  private readonly notificationService: NotificationService,
 ) {}
 
   private static readonly USERNAME_CHANGE_DAYS = 60;
@@ -170,6 +173,36 @@ async findByEmail(email: string): Promise<User | null> {
     .exec();
 }
 
+
+  /**
+   * The user editing their own profile.
+   *
+   * Separate from `update()` on purpose: that one is also the write path for
+   * the avatar and cover endpoints, and hooking a notification there would
+   * fire on every image save — twice for covers, which upload then PATCH.
+   */
+  async updateProfile(id: string, updateUserDto: UpdateUserDto): Promise<any> {
+    const result = await this.update(id, updateUserDto);
+
+    const changed = Object.keys(updateUserDto ?? {}).filter(
+      (key) => updateUserDto[key] !== undefined,
+    );
+
+    // An empty PATCH is a no-op, not something worth telling the user about.
+    if (changed.length > 0) {
+      // No actor: this is a notice to yourself, and notify() drops rows where
+      // the actor is the recipient.
+      void this.notificationService.notify({
+        users: id,
+        type: NotificationType.System,
+        title: 'Profile updated',
+        body: 'Your profile changes have been saved.',
+        metadata: { fields: changed },
+      });
+    }
+
+    return result;
+  }
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<any> {
     const user = await this.userModel

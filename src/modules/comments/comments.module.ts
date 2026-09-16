@@ -12,6 +12,7 @@ import {
   Report,
   ReportSchema,
 } from '../../database/schemas/report/report.schema';
+import { User, UserSchema } from '../../database/schemas/user/user.schema';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import {
       { name: Video.name, schema: VideoSchema },
       { name: CommentLike.name, schema: CommentLikeSchema },
       { name: Report.name, schema: ReportSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   controllers: [CommentsController],

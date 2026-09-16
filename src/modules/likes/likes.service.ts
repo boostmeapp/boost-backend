@@ -2,10 +2,48 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Like } from '../../database/schemas/like/like.schema';
+import { Video } from '../../database/schemas/video/video.schema';
+import { User } from '../../database/schemas/user/user.schema';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
 
 @Injectable()
 export class LikesService {
-  constructor(@InjectModel(Like.name) private likeModel: Model<Like>) {}
+  constructor(
+    @InjectModel(Like.name) private likeModel: Model<Like>,
+    @InjectModel(Video.name) private videoModel: Model<Video>,
+    @InjectModel(User.name) private userModel: Model<User>,
+    private readonly notificationService: NotificationService,
+  ) {}
+
+  /** Fire-and-forget: notify the video owner that someone liked their post. */
+  private async notifyOwner(actorId: string, videoId: string) {
+    const video = await this.videoModel
+      .findById(videoId)
+      .select('user title')
+      .lean();
+
+    if (!video?.user) return;
+
+    const actor = await this.userModel
+      .findById(actorId)
+      .select('firstName lastName username')
+      .lean();
+
+    const actorName =
+      `${actor?.firstName ?? ''} ${actor?.lastName ?? ''}`.trim() ||
+      actor?.username ||
+      'Someone';
+
+    void this.notificationService.notify({
+      users: String(video.user),
+      actor: actorId,
+      type: NotificationType.Like,
+      title: actorName,
+      body: `${actorName} liked your post`,
+      metadata: { videoId, title: video.title ?? '' },
+    });
+  }
 
   async toggleLike(
     userId: string,
@@ -35,6 +73,10 @@ export class LikesService {
       const likeCount = await this.likeModel.countDocuments({
         videoId: videoObjectId,
       });
+
+      // Only on the like, never the unlike.
+      void this.notifyOwner(userId, videoId);
+
       return { liked: true, likeCount };
     }
   }

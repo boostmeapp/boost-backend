@@ -54,6 +54,7 @@
     "class-validator": "^0.14.3",
     "compression": "^1.8.1",
     "dotenv": "^17.2.3",
+    "firebase-admin": "^14.4.0",
     "google-auth-library": "^11.0.2",
     "helmet": "^8.1.0",
     "ioredis": "^5.8.2",

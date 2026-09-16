@@ -27,7 +27,7 @@ async updateMe(
   @CurrentUser() user: User,
   @Body() updateUserDto: UpdateUserDto,
 ) {
-  return this.usersService.update(user.id, updateUserDto);
+  return this.usersService.updateProfile(user.id, updateUserDto);
 }
 
 @Get(':id/profile')

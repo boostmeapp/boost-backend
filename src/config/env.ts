@@ -94,6 +94,26 @@ export class ENV {
     return configService.get<number>('REDIS_DB', 0);
   }
 
+  // Redis TLS (managed Redis providers need this on)
+  static get REDIS_TLS(): boolean {
+    const raw = configService.get<string>('REDIS_TLS', '0');
+    return raw === '1' || raw === 'true';
+  }
+
+  // Firebase Cloud Messaging (push notifications)
+  static get FIREBASE_PROJECT_ID(): string {
+    return configService.get<string>('FIREBASE_PROJECT_ID', '');
+  }
+
+  static get FIREBASE_CLIENT_EMAIL(): string {
+    return configService.get<string>('FIREBASE_CLIENT_EMAIL', '');
+  }
+
+  /** Stored single-line with literal \n escapes; callers must unescape. */
+  static get FIREBASE_PRIVATE_KEY(): string {
+    return configService.get<string>('FIREBASE_PRIVATE_KEY', '');
+  }
+
   // Bull Queue
   static get BULL_REDIS_HOST(): string {
     return configService.get<string>('BULL_REDIS_HOST', this.REDIS_HOST);

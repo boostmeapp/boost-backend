@@ -22,6 +22,8 @@ import { VideoModule } from './modules/video/video.module';
 import { StripeConnectModule } from './modules/stripe-connect/stripe-connect.module';
 import { PayoutModule } from './modules/payout/payout.module';
 import { HealthModule } from './modules/health/health.module';
+import { RedisModule } from './modules/redis/redis.module';
+import { NotificationModule } from './modules/notification/notification.module';
 import { JwtAuthGuard } from './common/guards';
 import { CommonServicesModule } from './common/services/common-services.module';
 import { AllExceptionsFilter } from './common/filters';
@@ -93,6 +95,8 @@ ConfigModule.forRoot({
     }),
     DatabaseModule,
     CommonServicesModule,
+    RedisModule,
+    NotificationModule,
     MailerModule,
     AuthModule,
     UsersModule,

@@ -93,6 +93,10 @@ export class User extends Document {
   @Prop()
   bio?: string;
 
+  // Master push switch. The queue worker skips recipients who turn this off.
+  @Prop({ default: true })
+  notificationEnabled: boolean;
+
   @Prop({ trim: true })
   website?: string;
 
