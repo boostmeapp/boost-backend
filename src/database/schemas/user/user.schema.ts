@@ -92,6 +92,10 @@ export class User extends Document {
 
   @Prop()
   bio?: string;
+
+  @Prop({ trim: true })
+  website?: string;
+
   @Prop()
   dob?: Date;
 

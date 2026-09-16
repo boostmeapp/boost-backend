@@ -30,6 +30,12 @@ export class UpdateUserDto {
   @MaxLength(900)
   bio?: string;
 
+  // Free-text profile link. Kept unvalidated as a URL so users can type "boostra.me".
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  website?: string;
+
   // Holds a full public S3 URL since the upload service stopped presigning images.
   @IsOptional()
   @IsString()

@@ -174,7 +174,7 @@ async findByEmail(email: string): Promise<User | null> {
         {
           new: true,
           select:
-            'email firstName lastName username profileImage coverImage bio gender dob followerCount followingCount videoCount role',
+            'email firstName lastName username profileImage coverImage bio website gender dob followerCount followingCount videoCount role',
         },
       )
       .exec();
