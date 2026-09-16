@@ -197,8 +197,11 @@ export class UploadService {
         return `thumbnails/${userId}/${timestamp}-${randomId}.${extension}`;
       case UploadType.PROFILE_IMAGE:
         return `profiles/${userId}/${timestamp}-${randomId}.${extension}`;
+      // Shares the profiles/ prefix with the avatar: both are profile media,
+      // and the IAM policy is already scoped to it. Keys stay unique via the
+      // timestamp + uuid, so the two never collide.
       case UploadType.COVER_IMAGE:
-        return `covers/${userId}/${timestamp}-${randomId}.${extension}`;
+        return `profiles/${userId}/${timestamp}-${randomId}.${extension}`;
       case UploadType.CHAT_IMAGE:
         return `chat/${userId}/${timestamp}-${randomId}.${extension}`;
       default:
