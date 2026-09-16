@@ -91,7 +91,7 @@ async getProfile(viewerId: string | null, profileUserId: string) {
 
   // 1️⃣ User Profile Info
   const user = await this.userModel.findById(profileObjectId)
-    .select("firstName lastName username profileImage coverImage followerCount followingCount videoCount")
+    .select("firstName lastName username profileImage coverImage bio followerCount followingCount videoCount")
     .lean();
 
   if (!user) throw new NotFoundException("User not found");
@@ -134,7 +134,12 @@ async getProfile(viewerId: string | null, profileUserId: string) {
   })
   .sort({ createdAt: -1 })
   .limit(12)
-  .select("thumbnailUrl videoUrl rawVideoKey duration viewCount views likeCount")
+  // The profile feed renders full post cards, so it needs the copy, the
+  // counts and the timestamp — not just enough for a thumbnail grid.
+  .select(
+    "thumbnailUrl videoUrl rawVideoKey duration viewCount views " +
+    "likeCount commentCount shareCount title description caption tags isBoosted createdAt",
+  )
   .lean();
 
   return {
