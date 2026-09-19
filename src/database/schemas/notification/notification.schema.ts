@@ -78,11 +78,11 @@ export const NotificationSchema = SchemaFactory.createForClass(Notification);
 
 NotificationSchema.plugin(mongoosePaginate as any);
 
-// The app's list: newest first, per user.
-NotificationSchema.index({ user: 1, createdAt: -1 });
+// The app's list: newest first, per user. `_id` matches the list's tiebreak sort.
+NotificationSchema.index({ user: 1, createdAt: -1, _id: -1 });
 
 // Unread badge count.
 NotificationSchema.index({ user: 1, isRead: 1 });
 
 // The "Boosts" filter tab.
-NotificationSchema.index({ user: 1, type: 1, createdAt: -1 });
+NotificationSchema.index({ user: 1, type: 1, createdAt: -1, _id: -1 });

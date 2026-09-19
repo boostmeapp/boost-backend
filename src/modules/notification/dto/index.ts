@@ -38,6 +38,14 @@ export class ListNotificationsDto {
   @IsIn(['all', 'unread', 'boosts'])
   filter?: 'all' | 'unread' | 'boosts';
 
+  /** Rows to skip. Takes precedence over `page` when both are sent. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  /** Kept for older clients; converted to an offset. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -43,14 +43,20 @@ export class NotificationController {
   /*  In-app list                                                         */
   /* ------------------------------------------------------------------ */
 
-  /** The notifications screen. `filter` maps to its All / Unread / Boosts tabs. */
+  /**
+   * The notifications screen. `filter` maps to its All / Unread / Boosts tabs.
+   * Offset-paginated: `?offset=0&limit=10`, then `offset=pagination.nextOffset`.
+   */
   @Get()
   async list(@CurrentUser() user: User, @Query() query: ListNotificationsDto) {
+    const limit = query.limit ?? 10;
+    const offset = query.offset ?? ((query.page ?? 1) - 1) * limit;
+
     return this.notificationService.getUserNotifications(
       user.id,
       query.filter ?? 'all',
-      query.page ?? 1,
-      query.limit ?? 20,
+      offset,
+      limit,
     );
   }
 

@@ -116,24 +116,25 @@ export class NotificationService {
   /*  Reading                                                             */
   /* ------------------------------------------------------------------ */
 
-  /** The app's notification list, newest first. */
+  /** The app's notification list, newest first, offset-paginated. */
   async getUserNotifications(
     userId: string,
     filter: NotificationFilter = 'all',
-    page = 1,
-    limit = 20,
+    offset = 0,
+    limit = 10,
   ) {
     const query: Record<string, any> = { user: new Types.ObjectId(userId) };
 
     if (filter === 'unread') query.isRead = false;
     if (filter === 'boosts') query.type = { $in: BOOST_NOTIFICATION_TYPES };
 
-    const skip = (Math.max(1, page) - 1) * limit;
+    const skip = Math.max(0, offset);
 
     const [items, total] = await Promise.all([
       this.notificationModel
         .find(query)
-        .sort({ createdAt: -1 })
+        // `_id` breaks createdAt ties so consecutive offsets never overlap or skip.
+        .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
         .populate('actor', 'firstName lastName username profileImage')
@@ -147,9 +148,10 @@ export class NotificationService {
         actor: item.actor ? this.mediaUrl.toPublicUser(item.actor) : null,
       })),
       pagination: {
-        page,
+        offset: skip,
         limit,
         total,
+        nextOffset: skip + items.length,
         hasNextPage: skip + items.length < total,
       },
     };
