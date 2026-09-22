@@ -122,6 +122,10 @@ export class Video extends Document {
   @Prop()
   boostEndDate?: Date;
 
+  // The live boost campaign (active or paused), if any.
+  @Prop({ type: Types.ObjectId, ref: 'BoostCampaign' })
+  activeCampaign?: Types.ObjectId;
+
   // Reward Pool (for boosted videos)
   @Prop({ default: false })
   hasRewardPool: boolean;

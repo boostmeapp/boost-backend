@@ -96,6 +96,23 @@ export class RedisService implements OnModuleDestroy {
     return this.client.del(this.getEnvKey(key));
   }
 
+  /**
+   * SET NX EX: true only for the first caller within the TTL. The building
+   * block for "once per window" dedupe and throttles.
+   */
+  async setIfAbsent(key: string, ttlSeconds: number, value = '1'): Promise<boolean> {
+    const res = await this.client.set(this.getEnvKey(key), value, 'EX', ttlSeconds, 'NX');
+    return res === 'OK';
+  }
+
+  /** INCR with the TTL set on first increment — a fixed-window counter. */
+  async incrWithTtl(key: string, ttlSeconds: number): Promise<number> {
+    const envKey = this.getEnvKey(key);
+    const count = await this.client.incr(envKey);
+    if (count === 1) await this.client.expire(envKey, ttlSeconds);
+    return count;
+  }
+
   async existsKey(key: string): Promise<boolean> {
     return (await this.client.exists(this.getEnvKey(key))) === 1;
   }

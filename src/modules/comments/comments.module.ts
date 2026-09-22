@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BoostCampaignsModule } from '../boost-campaigns/boost-campaigns.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Comment, CommentSchema } from './comment.schema';
 import { CommentsService } from './comments.service';
@@ -23,6 +24,7 @@ import { User, UserSchema } from '../../database/schemas/user/user.schema';
       { name: Report.name, schema: ReportSchema },
       { name: User.name, schema: UserSchema },
     ]),
+    BoostCampaignsModule,
   ],
   controllers: [CommentsController],
   providers: [CommentsService],

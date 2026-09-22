@@ -16,6 +16,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
 import { TransactionModule } from './modules/transaction/transaction.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { BoostModule } from './modules/boost/boost.module';
+import { BoostCampaignsModule } from './modules/boost-campaigns/boost-campaigns.module';
 import { RewardModule } from './modules/reward/reward.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { VideoModule } from './modules/video/video.module';
@@ -106,6 +107,7 @@ ConfigModule.forRoot({
     TransactionModule,
     PaymentModule,
     BoostModule,
+    BoostCampaignsModule,
     CommentsModule,
     SearchModule,
     RewardModule,

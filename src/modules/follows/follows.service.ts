@@ -1,3 +1,4 @@
+import { BoostEngagementService } from '../boost-campaigns/boost-engagement.service';
 import {
   Injectable,
   ConflictException,
@@ -18,6 +19,7 @@ export class FollowsService {
     @InjectModel(Follow.name) private followModel: PaginateModel<Follow>,
     @InjectModel(User.name) private userModel: Model<User>,
     private readonly notificationService: NotificationService,
+    private readonly boostEngagement: BoostEngagementService,
   ) { }
 
   // Follow a user
@@ -83,6 +85,8 @@ export class FollowsService {
     body: `${actorName} started following you`,
     metadata: { userId: followerId },
   });
+
+  void this.boostEngagement.onFollow(followerId, followingId);
 
   return { message: 'Followed successfully' };
 }

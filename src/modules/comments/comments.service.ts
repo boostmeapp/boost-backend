@@ -8,6 +8,7 @@ import { Model, Types } from 'mongoose';
 import { User, Video } from 'src/database/schemas';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/notification.constants';
+import { BoostEngagementService } from '../boost-campaigns/boost-engagement.service';
 import { CommentLike } from '../../database/schemas/comment-like/comment-like.schema';
 import {
   Report,
@@ -30,6 +31,7 @@ export class CommentsService {
     @InjectModel(Report.name) private reportModel: Model<Report>,
     @InjectModel(User.name) private userModel: Model<User>,
     private readonly notificationService: NotificationService,
+    private readonly boostEngagement: BoostEngagementService,
   ) {}
 
   /**
@@ -176,6 +178,7 @@ export class CommentsService {
     );
 
     void this.notifyComment(userId, video, dto.content);
+    void this.boostEngagement.onVideoEngagement(userId, String(dto.videoId), 'comments');
 
     return comment;
   }

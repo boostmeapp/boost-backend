@@ -8,6 +8,8 @@ import { User } from '../../database/schemas/user/user.schema';
 import { Types } from 'mongoose';
 import { MediaUrlService } from '../../common/services/media-url.service';
 import { FeedQueryDto } from './dto';
+import { BoostDeliveryService } from '../boost-campaigns/boost-delivery.service';
+import { BOOST_CONFIG } from '../boost-campaigns/boost-campaigns.config';
 
 
 @Injectable()
@@ -18,6 +20,7 @@ constructor(
   @InjectModel(User.name) private userModel: Model<User>,
   private likesService: LikesService,
   private mediaUrl: MediaUrlService,
+  private boostDelivery: BoostDeliveryService,
 ) {}
 
   /** Fields the mobile client actually reads. Everything else stays on the server. */
@@ -209,8 +212,52 @@ async getGlobalFeed(query: FeedQueryDto, userId?: string) {
     base.user = { $nin: blockedIds };
   }
 
-  return this.paginate(base, query, userId);
+  const page = await this.paginate(base, query, userId);
+  if (userId && page.docs.length) await this.injectBoosts(page, userId);
+  return page;
 }
+
+  /**
+   * Puts boosted campaigns into a For You page: one slot per BOOST_SLOT_EVERY
+   * items, at positions 4, 9, 14… (1-based). The cursor was computed from the
+   * organic rows, so injection doesn't disturb pagination. Signed-in only —
+   * guests can't be frequency-capped or counted.
+   */
+  private async injectBoosts(page: { docs: any[] }, viewerId: string) {
+    const every = BOOST_CONFIG.BOOST_SLOT_EVERY;
+    const slots = Math.max(1, Math.floor(page.docs.length / (every - 1)));
+
+    const picks = await this.boostDelivery.pickForViewer(
+      viewerId,
+      slots,
+      [],
+      FeedService.FEED_PROJECTION,
+      FeedService.USER_PROJECTION,
+    );
+    if (!picks.length) return;
+
+    const likedMap = await this.likesService.hasUserLikedVideos(
+      viewerId,
+      picks.map(p => String(p.video._id)),
+    );
+
+    // A boosted video shouldn't also appear organically on the same page.
+    const pickedIds = new Set(picks.map(p => String(p.video._id)));
+    const docs = page.docs.filter(d => !pickedIds.has(String(d._id)));
+
+    picks.forEach((pick, i) => {
+      const item = {
+        ...this.present(pick.video, likedMap.get(String(pick.video._id)) || false),
+        isBoosted: true,
+        // Echoed back in POST /videos/:id/views so the view is credited.
+        boost: { campaignId: pick.campaignId },
+      };
+      docs.splice(Math.min(every - 2 + i * every, docs.length), 0, item);
+    });
+
+    page.docs = docs;
+    void this.boostDelivery.recordImpressions(viewerId, picks);
+  }
 
 
   /**

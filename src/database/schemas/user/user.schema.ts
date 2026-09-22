@@ -106,6 +106,11 @@ export class User extends Document {
   @Prop()
   gender?: string;
 
+  // Last authenticated request, written at most hourly. Boost reach counts
+  // only people who actually open the app.
+  @Prop({ index: true })
+  lastActiveAt?: Date;
+
   // Moderation: users this user has blocked (their content is hidden)
   @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
   blockedUsers: Types.ObjectId[];

@@ -14,3 +14,6 @@ export * from './chat/conversation.schema';
 export * from './chat/message.schema';
 export * from './notification/notification.schema';
 export * from './notification/device-token.schema';
+export * from './boost-campaign/boost-campaign.schema';
+export * from './boost-campaign/boost-impression.schema';
+export * from './boost-campaign/boost-view.schema';

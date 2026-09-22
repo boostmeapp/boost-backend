@@ -164,6 +164,11 @@ export class ENV {
     return Number(configService.get<string>('COINS_PER_GBP', '100'));
   }
 
+  // Boost campaigns: qualified unique views bought per coin (500 coins × 4 = 2,000 views)
+  static get BOOST_VIEWS_PER_COIN(): number {
+    return Number(configService.get<string>('BOOST_VIEWS_PER_COIN', '4'));
+  }
+
   // RevenueCat webhook Authorization header secret
   static get REVENUECAT_WEBHOOK_SECRET(): string {
     return configService.get<string>('REVENUECAT_WEBHOOK_SECRET', '');

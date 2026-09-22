@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { BoostEngagementService } from '../boost-campaigns/boost-engagement.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Like } from '../../database/schemas/like/like.schema';
@@ -14,6 +15,7 @@ export class LikesService {
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(User.name) private userModel: Model<User>,
     private readonly notificationService: NotificationService,
+    private readonly boostEngagement: BoostEngagementService,
   ) {}
 
   /** Fire-and-forget: notify the video owner that someone liked their post. */
@@ -76,6 +78,7 @@ export class LikesService {
 
       // Only on the like, never the unlike.
       void this.notifyOwner(userId, videoId);
+      void this.boostEngagement.onVideoEngagement(userId, videoId, 'likes');
 
       return { liked: true, likeCount };
     }
