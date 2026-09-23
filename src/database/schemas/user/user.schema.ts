@@ -81,7 +81,8 @@ export class User extends Document {
 
   createdAt: Date;
   updatedAt: Date;
-  @Prop({ unique: true, sparse: true, lowercase: true, trim: true })
+  // The display name (see display-name.util). Deliberately NOT unique for now.
+  @Prop({ index: true, sparse: true, lowercase: true, trim: true })
   username?: string;
 
   @Prop()
@@ -167,8 +168,8 @@ UserSchema.index({ stripeConnectAccountId: 1, stripeOnboardingComplete: 1 }); //
 UserSchema.index({ role: 1, isActive: 1 }); // Admin queries
 UserSchema.index({ isBanned: 1 }); // Security queries
 UserSchema.index({ createdAt: -1 }); // Recent users
-// username is already indexed by @Prop({ unique, sparse }) — a plain index here
-// declares the same key a second time, and without the uniqueness constraint.
+// username is already indexed by @Prop({ index, sparse }) — a plain index here
+// would declare the same key a second time.
 
 // 🔍 TEXT SEARCH INDEX (FOR USER SEARCH)
 UserSchema.index(

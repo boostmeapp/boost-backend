@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BoostEngagementService } from '../boost-campaigns/boost-engagement.service';
+import { displayName } from '../../common/utils/display-name.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Like } from '../../database/schemas/like/like.schema';
@@ -32,10 +33,7 @@ export class LikesService {
       .select('firstName lastName username')
       .lean();
 
-    const actorName =
-      `${actor?.firstName ?? ''} ${actor?.lastName ?? ''}`.trim() ||
-      actor?.username ||
-      'Someone';
+    const actorName = displayName(actor);
 
     void this.notificationService.notify({
       users: String(video.user),

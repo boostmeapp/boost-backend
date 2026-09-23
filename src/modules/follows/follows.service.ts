@@ -1,4 +1,5 @@
 import { BoostEngagementService } from '../boost-campaigns/boost-engagement.service';
+import { displayName } from '../../common/utils/display-name.util';
 import {
   Injectable,
   ConflictException,
@@ -72,10 +73,7 @@ export class FollowsService {
     .select('firstName lastName username')
     .lean();
 
-  const actorName =
-    `${follower?.firstName ?? ''} ${follower?.lastName ?? ''}`.trim() ||
-    follower?.username ||
-    'Someone';
+  const actorName = displayName(follower);
 
   void this.notificationService.notify({
     users: followingId,
@@ -136,7 +134,7 @@ export class FollowsService {
       sort: { createdAt: -1 },
       populate: {
         path: 'follower',
-        select: '_id firstName lastName profileImage followerCount followingCount',
+        select: '_id username firstName lastName profileImage followerCount followingCount',
       },
       lean: true,
     },
@@ -154,7 +152,7 @@ async getFollowing(userId: string, page = 1, limit = 20) {
       sort: { createdAt: -1 },
       populate: {
         path: 'following',
-        select: '_id firstName lastName profileImage followerCount followingCount',
+        select: '_id username firstName lastName profileImage followerCount followingCount',
       },
       lean: true,
     },

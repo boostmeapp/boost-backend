@@ -11,8 +11,11 @@ export interface CommentResponse {
   createdAt: Date;
   user: {
     _id: string;
+    // The display name; firstName/lastName are the legacy fallback.
+    username?: string;
     firstName?: string;
     lastName?: string;
+    profileImage?: string;
   };
 }
 

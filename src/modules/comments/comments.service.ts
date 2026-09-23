@@ -17,6 +17,7 @@ import {
 } from '../../database/schemas/report/report.schema';
 import { Comment } from './comment.schema';
 import { CreateCommentDto } from './dto/create-comment.dto';
+import { displayName } from '../../common/utils/display-name.util';
 import { CommentResponse } from './interfaces/comment.interface';
 import { CommentWithVideoUser } from './types/comment-populated.type';
 import { scanText } from '../../common/utils/content-filter.util';
@@ -135,10 +136,7 @@ export class CommentsService {
       .select('firstName lastName username')
       .lean();
 
-    const actorName =
-      `${actor?.firstName ?? ''} ${actor?.lastName ?? ''}`.trim() ||
-      actor?.username ||
-      'Someone';
+    const actorName = displayName(actor);
 
     void this.notificationService.notify({
       users: String(video.user),
@@ -196,7 +194,7 @@ async getVideoComments(
       isDeleted: false,
       isRemoved: false,
     })
-    .populate('user', 'firstName lastName')
+    .populate('user', 'username firstName lastName profileImage')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
@@ -232,7 +230,7 @@ private async withUserState(
       isDeleted: false,
       isRemoved: false,
     })
-    .populate('user', 'firstName lastName')
+    .populate('user', 'username firstName lastName profileImage')
     .sort({ createdAt: 1 })
     .lean();
 
