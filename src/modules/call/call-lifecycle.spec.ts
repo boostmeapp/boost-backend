@@ -432,4 +432,12 @@ describe('Call lifecycle', () => {
       });
     });
   });
+
+  it('CALLING_ENABLED=false never blocks an in-flight call from ending', async () => {
+    const { ENV } = await Promise.resolve(require('../../config'));
+    ENV.init({ get: (k: string, fallback: unknown) => (k === 'CALLING_ENABLED' ? 'false' : fallback) } as any);
+    const call = newCall({ status: CallStatus.Active, answeredAt: new Date() });
+
+    await expect(act(caller, call, 'end')).resolves.toMatchObject({ status: CallStatus.Ended });
+  });
 });

@@ -15,6 +15,9 @@ describe('percentile', () => {
 describe('CallMetricsService', () => {
   let groups: { _id: CallStatus; count: number; answered: number }[];
   let ratingAgg: { count: number; low: number }[];
+  let usageAgg: { minutes: number }[];
+  let usagePipeline: any[];
+  const env: Record<string, string> = {};
   let answeredRows: { ringStartedAt: Date; answeredAt: Date }[];
   let redis: any;
   let service: CallMetricsService;
@@ -26,18 +29,22 @@ describe('CallMetricsService', () => {
   };
 
   beforeAll(() => {
-    ENV.init({ get: (_k: string, fallback: unknown) => fallback } as any);
+    ENV.init({ get: (k: string, fallback: unknown) => env[k] ?? fallback } as any);
   });
 
   beforeEach(() => {
     groups = [];
     ratingAgg = [];
+    usageAgg = [];
+    for (const k of Object.keys(env)) delete env[k];
     answeredRows = [];
     const callModel = {
       // The ratings pipeline is the one that unwinds metadata.feedback.
-      aggregate: jest.fn(async (pipeline: any[]) =>
-        pipeline.some((st) => st.$unwind) ? ratingAgg : groups,
-      ),
+      aggregate: jest.fn(async (pipeline: any[]) => {
+        if (pipeline.some((st) => st.$unwind)) return ratingAgg;
+        if (pipeline[0]?.$match?.answeredAt) return (usagePipeline = pipeline), usageAgg;
+        return groups;
+      }),
       find: jest.fn((f: any) => {
         findFilter = f;
         const chain: any = { select: () => chain, limit: () => chain, lean: async () => answeredRows };
@@ -160,5 +167,58 @@ describe('CallMetricsService', () => {
       3,
       expect.any(Number),
     );
+  });
+
+  describe('usage / cost monitoring (Iteration 13)', () => {
+    it('7. month-to-date participant minutes: started minutes × participants, since the 1st (UTC)', async () => {
+      usageAgg = [{ minutes: 7000 }];
+      env.CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE = '10000';
+
+      const u = await service.monthToDateUsage(new Date('2026-09-25T12:00:00Z'));
+
+      expect(u).toEqual({
+        monthStart: new Date('2026-09-01T00:00:00Z'),
+        participantMinutes: 7000,
+        allowance: 10000,
+        share: 0.7,
+      });
+      expect(usagePipeline[0].$match.answeredAt.$gte).toEqual(new Date('2026-09-01T00:00:00Z'));
+      expect(JSON.stringify(usagePipeline[1])).toContain('$ceil');
+      expect(JSON.stringify(usagePipeline[1])).toContain('$participants');
+    });
+
+    it('no allowance configured → share null, and no alert', async () => {
+      usageAgg = [{ minutes: 99999 }];
+
+      expect((await service.monthToDateUsage()).share).toBeNull();
+      await service.checkUsage();
+      expect((service as any).logger.error).not.toHaveBeenCalled();
+    });
+
+    it('alerts at 70% of the allowance', async () => {
+      env.CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE = '1000';
+      usageAgg = [{ minutes: 700 }];
+
+      await service.checkUsage();
+
+      expect((service as any).logger.error).toHaveBeenCalledWith(
+        expect.stringMatching(/^ALERT call usage at 70\.0% of the monthly allowance/),
+      );
+    });
+
+    it('quiet below 70%', async () => {
+      env.CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE = '1000';
+      usageAgg = [{ minutes: 699 }];
+
+      await service.checkUsage();
+
+      expect((service as any).logger.error).not.toHaveBeenCalled();
+    });
+
+    it('usage is included in the metrics endpoint', async () => {
+      usageAgg = [{ minutes: 42 }];
+
+      expect((await service.compute(24)).usage.participantMinutes).toBe(42);
+    });
   });
 });

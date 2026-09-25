@@ -5,7 +5,7 @@ import { Model } from 'mongoose';
 import { Call } from '../../database/schemas/call/call.schema';
 import { ENV } from '../../config';
 import { RedisService } from '../redis/redis.service';
-import { ANSWER_RATE_ALERT_MIN_SAMPLE, CallStatus } from './call.constants';
+import { ANSWER_RATE_ALERT_MIN_SAMPLE, CallStatus, USAGE_ALERT_SHARE } from './call.constants';
 
 /** Hourly bucket key for sweeper catches, e.g. call:metrics:sweep-caught:2026092514. */
 const sweepBucketKey = (d: Date) =>
@@ -13,6 +13,20 @@ const sweepBucketKey = (d: Date) =>
 const SWEEP_BUCKET_TTL_SECONDS = 31 * 24 * 3600;
 /** Cap on answered calls read for latency percentiles. */
 const LATENCY_SAMPLE_CAP = 10_000;
+
+export interface CallUsage {
+  /** First instant of the current UTC month. */
+  monthStart: Date;
+  /**
+   * Answered calls this month: each started minute × participants — the way
+   * Stream counts participant-minutes. An estimate for early warning, not the
+   * invoice: check the Stream dashboard for the billed figure.
+   */
+  participantMinutes: number;
+  allowance: number | null;
+  /** participantMinutes / allowance, or null with no allowance configured. */
+  share: number | null;
+}
 
 export interface CallMetrics {
   window: { from: Date; to: Date; hours: number };
@@ -38,6 +52,7 @@ export interface CallMetrics {
    * Catches quality regressions that packet stats miss.
    */
   ratings: { count: number; lowShare: number | null };
+  usage: CallUsage;
 }
 
 /** Nearest-rank percentile of an ascending array. */
@@ -70,7 +85,7 @@ export class CallMetricsService {
     const from = new Date(to.getTime() - hours * 3600 * 1000);
     const range = { createdAt: { $gte: from, $lte: to } };
 
-    const [byStatus, answeredRows, sweeperCaught, ratingRows] = await Promise.all([
+    const [byStatus, answeredRows, sweeperCaught, ratingRows, usage] = await Promise.all([
       this.callModel.aggregate<{ _id: CallStatus; count: number; answered: number }>([
         { $match: range },
         {
@@ -100,6 +115,7 @@ export class CallMetricsService {
           },
         },
       ]),
+      this.monthToDateUsage(),
     ]);
 
     const count = (s: CallStatus) => byStatus.find((r) => r._id === s)?.count ?? 0;
@@ -136,7 +152,68 @@ export class CallMetricsService {
           ? Math.round((ratingRows[0].low / ratingRows[0].count) * 1000) / 1000
           : null,
       },
+      usage,
     };
+  }
+
+  async monthToDateUsage(now = new Date()): Promise<CallUsage> {
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [row] = await this.callModel.aggregate<{ minutes: number }>([
+      // createdAt narrows via its index; a call answered this month started at
+      // most a few hours before it, so a day of slack is ample.
+      {
+        $match: {
+          createdAt: { $gte: new Date(monthStart.getTime() - 24 * 3600 * 1000) },
+          answeredAt: { $gte: monthStart },
+          durationSeconds: { $gt: 0 },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          minutes: {
+            $sum: {
+              $multiply: [{ $ceil: { $divide: ['$durationSeconds', 60] } }, { $size: '$participants' }],
+            },
+          },
+        },
+      },
+    ]);
+    const participantMinutes = row?.minutes ?? 0;
+    const allowance = ENV.CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE || null;
+    return {
+      monthStart,
+      participantMinutes,
+      allowance,
+      share: allowance ? Math.round((participantMinutes / allowance) * 1000) / 1000 : null,
+    };
+  }
+
+  /**
+   * Daily: alert at 70% of the plan's monthly allowance. On the Maker plan the
+   * limit is hard — hitting it means calls stop working, not a bigger invoice.
+   * (Daily rather than the roadmap's weekly: the query is cheap and a week is
+   * long enough to burn the last 30%.)
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async checkUsage(): Promise<void> {
+    if (!ENV.CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE) return;
+    const day = new Date().toISOString().slice(0, 10);
+    const first = await this.redis.setIfAbsent(`call:usage-check:${day}`, 24 * 3600).catch(() => true);
+    if (!first) return;
+
+    try {
+      const u = await this.monthToDateUsage();
+      if (u.share !== null && u.share >= USAGE_ALERT_SHARE) {
+        this.logger.error(
+          `ALERT call usage at ${(u.share * 100).toFixed(1)}% of the monthly allowance ` +
+            `(${u.participantMinutes}/${u.allowance} participant-minutes) — calls stop at 100%; ` +
+            `upgrade the Stream plan or raise the limit (docs/video-calling-runbook.md)`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(`Usage check failed: ${(err as Error).message}`);
+    }
   }
 
   /**

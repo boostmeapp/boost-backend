@@ -64,7 +64,7 @@ export class StreamVideoService implements OnModuleInit {
     push: null,
   };
 
-  onModuleInit() {
+  async onModuleInit() {
     const missing = [
       !ENV.STREAM_API_KEY && 'STREAM_API_KEY',
       !ENV.STREAM_API_SECRET && 'STREAM_API_SECRET',
@@ -89,8 +89,54 @@ export class StreamVideoService implements OnModuleInit {
     this.status.appId = ENV.STREAM_APP_ID || null;
     this.logger.log(`Stream Video client ready (app ${ENV.STREAM_APP_ID || 'unknown'}).`);
 
+    await this.verifyAppIdentity();
+
     // Detached: a slow or failing probe must not hold up application boot.
     void this.probe();
+  }
+
+  /**
+   * Refuse to boot against the wrong Stream app — a staging backend holding
+   * production credentials makes staging test calls ring real users. Checks
+   * the app the *key* actually belongs to (not what config claims):
+   *   - non-production + key belongs to STREAM_PRODUCTION_APP_ID → refuse
+   *   - production + key belongs to any other app                → refuse
+   *   - STREAM_APP_ID set but disagrees with the key's real app  → refuse
+   * Skipped when STREAM_PRODUCTION_APP_ID is unset (e.g. local dev). If Stream
+   * can't be reached it warns and boots: an outage must not block a deploy.
+   */
+  private async verifyAppIdentity(): Promise<void> {
+    const productionAppId = ENV.STREAM_PRODUCTION_APP_ID;
+    if (!productionAppId) {
+      if (ENV.IS_PRODUCTION) {
+        this.logger.error(
+          'STREAM_PRODUCTION_APP_ID is not set — cannot verify this backend is on the production Stream app.',
+        );
+      }
+      return;
+    }
+
+    let actualAppId: string;
+    try {
+      actualAppId = String((await this.client!.getApp()).app.id);
+    } catch (err) {
+      this.logger.warn(`Stream app identity not verified (unreachable): ${(err as Error).message}`);
+      return;
+    }
+
+    const problem =
+      ENV.STREAM_APP_ID && ENV.STREAM_APP_ID !== actualAppId
+        ? `STREAM_APP_ID is ${ENV.STREAM_APP_ID} but the API key belongs to app ${actualAppId}`
+        : !ENV.IS_PRODUCTION && actualAppId === productionAppId
+          ? `NODE_ENV=${ENV.NODE_ENV} is using the PRODUCTION Stream app (${actualAppId}) — test calls would ring real users`
+          : ENV.IS_PRODUCTION && actualAppId !== productionAppId
+            ? `production is using Stream app ${actualAppId}, not the production app ${productionAppId}`
+            : null;
+
+    if (problem) {
+      throw new Error(`Refusing to start: ${problem}.`);
+    }
+    this.logger.log(`Stream app identity verified (app ${actualAppId}).`);
   }
 
   isEnabled(): boolean {
@@ -173,6 +219,14 @@ export class StreamVideoService implements OnModuleInit {
           custom: args.custom,
         },
       });
+  }
+
+  /**
+   * Hard-delete a user from Stream, with the calls they own there. Runs as an
+   * async task on Stream's side.
+   */
+  async deleteUser(userId: string): Promise<void> {
+    await this.getClient().deleteUsers({ user_ids: [userId], user: 'hard', calls: 'hard' });
   }
 
   /** Local HMAC signing — no network call. */

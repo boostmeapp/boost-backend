@@ -153,7 +153,8 @@ export class CallService {
     user: User,
     apnsEnvironment: ApnsEnvironment = ApnsEnvironment.Production,
   ): Promise<StreamTokenResponse> {
-    // Throws 503 before anything else when calling is disabled.
+    // 503 before anything else when calling is switched off or unconfigured.
+    this.assertCallingOpenFor(user);
     const apiKey = this.streamVideo.getApiKey();
 
     // Inactive users never get this far — the JWT strategy rejects them with 401.
@@ -212,7 +213,8 @@ export class CallService {
    * `failed` record, never a ringing phone with no record.
    */
   async initiate(caller: User, dto: InitiateCallDto): Promise<InitiateCallResponse> {
-    this.streamVideo.getClient(); // 503 when calling is disabled
+    this.assertCallingOpenFor(caller);
+    this.streamVideo.getClient(); // 503 when calling is unconfigured
 
     const callerId = caller._id.toString();
     const { calleeId, callType, conversationId } = dto;
@@ -765,6 +767,22 @@ export class CallService {
   }
 
   /**
+   * The CALLING_ENABLED feature flag, with an allow-list for internal rollout.
+   * Gates only what *starts* calls (token, initiate, pre-flight): with it off,
+   * in-flight calls still end and record correctly, and the app hides calling
+   * because it can't get a token. A callee without a token is never
+   * calling-capable, so the allow-list gates both sides.
+   */
+  private assertCallingOpenFor(user: User): void {
+    if (ENV.CALLING_ENABLED) return;
+    if (ENV.CALLING_ROLLOUT_USER_IDS.includes(user._id.toString())) return;
+    throw new ServiceUnavailableException({
+      message: 'Calling is not available yet',
+      code: CallErrorCode.CallingDisabled,
+    });
+  }
+
+  /**
    * Stamp callingCapableAt, at most once per refresh window. Skips the write
    * when the JWT's user doc is already fresh, and the conditional filter makes
    * a concurrent refresh a no-op. Never fails token issuance.
@@ -807,7 +825,8 @@ export class CallService {
    * re-checks everything. Blocked and unavailable stay indistinguishable.
    */
   async canCall(user: User, calleeId: string): Promise<{ allowed: boolean; code?: string }> {
-    this.streamVideo.getClient(); // 503 when calling is disabled
+    this.assertCallingOpenFor(user);
+    this.streamVideo.getClient(); // 503 when calling is unconfigured
     const callerId = user._id.toString();
     try {
       await this.callAuthorization.assertCanCall(callerId, calleeId);

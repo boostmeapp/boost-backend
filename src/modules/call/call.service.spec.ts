@@ -50,9 +50,13 @@ class FakeRedis {
 }
 
 describe('CallService', () => {
+  // Per-test ENV overrides; everything else falls back to its default.
+  const env: Record<string, string> = {};
   beforeAll(() => {
-    // Built-in defaults for every ENV getter.
-    ENV.init({ get: (_key: string, fallback: unknown) => fallback } as any);
+    ENV.init({ get: (key: string, fallback: unknown) => env[key] ?? fallback } as any);
+  });
+  afterEach(() => {
+    for (const k of Object.keys(env)) delete env[k];
   });
 
   let streamVideo: any;
@@ -780,6 +784,47 @@ describe('CallService', () => {
       await service.getHistory(me, { page: 1, limit: 10 } as any);
 
       expect(String(filter.hiddenFor.$ne)).toBe(me._id.toString());
+    });
+  });
+
+  describe('CALLING_ENABLED feature flag (Iteration 13)', () => {
+    const disabled = async (p: Promise<unknown>) => {
+      const err = await p.then(() => null, (e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(err.getResponse().code).toBe('CALLING_DISABLED');
+    };
+
+    it('1. off: token, initiate and pre-flight all return 503 CALLING_DISABLED', async () => {
+      env.CALLING_ENABLED = 'false';
+
+      await disabled(service.issueToken(makeUser()));
+      await disabled(service.initiate(makeUser(), { calleeId: oid().toString(), callType: CallType.Audio }));
+      await disabled(service.canCall(makeUser(), oid().toString()));
+      expect(callModel.create).not.toHaveBeenCalled();
+    });
+
+    it('off: users on the rollout allow-list still can', async () => {
+      const insider = makeUser();
+      env.CALLING_ENABLED = 'false';
+      env.CALLING_ROLLOUT_USER_IDS = `${oid()}, ${insider._id}`;
+
+      await expect(service.issueToken(insider)).resolves.toMatchObject({ token: 'signed-token' });
+      await disabled(service.issueToken(makeUser()));
+    });
+
+    it('defaults OFF in production and ON elsewhere', async () => {
+      env.NODE_ENV = 'production';
+      await disabled(service.issueToken(makeUser()));
+
+      env.NODE_ENV = 'development';
+      await expect(service.issueToken(makeUser())).resolves.toBeDefined();
+    });
+
+    it('an explicit true in production turns it on', async () => {
+      env.NODE_ENV = 'production';
+      env.CALLING_ENABLED = 'true';
+
+      await expect(service.issueToken(makeUser())).resolves.toBeDefined();
     });
   });
 });

@@ -23,11 +23,17 @@ export enum CallEndReason {
   CalleeBusy = 'callee_busy',
   Blocked = 'blocked',
   AdminTerminated = 'admin_terminated',
+  AccountDeleted = 'account_deleted',
 }
+
+/** Usage alert: month-to-date participant minutes at this share of the allowance. */
+export const USAGE_ALERT_SHARE = 0.7;
 
 /** Machine-readable `code` on call error responses, so the app can show the right copy. */
 export enum CallErrorCode {
   CallingUnavailable = 'CALLING_UNAVAILABLE',
+  /** CALLING_ENABLED is off (and the user isn't in the rollout list). Clients hide calling. */
+  CallingDisabled = 'CALLING_DISABLED',
   AccountBanned = 'ACCOUNT_BANNED',
   CannotCallSelf = 'CANNOT_CALL_SELF',
   /** Also returned for blocks, so a blocked caller cannot tell the difference. */

@@ -156,6 +156,44 @@ export class ENV {
     return Number.isFinite(n) && n > 0 ? n : 45;
   }
 
+  /**
+   * Master switch for new calls (tokens, initiation, pre-flight). Off: those
+   * return 503 CALLING_DISABLED; in-flight calls, webhooks and history keep
+   * working. Defaults OFF in production so calling ships dark, ON elsewhere.
+   */
+  static get CALLING_ENABLED(): boolean {
+    const raw = configService.get<string>('CALLING_ENABLED');
+    if (raw === undefined || raw === '') return !this.IS_PRODUCTION;
+    return raw === 'true' || raw === '1';
+  }
+
+  /** While CALLING_ENABLED is off, these user ids can still call (internal rollout). */
+  static get CALLING_ROLLOUT_USER_IDS(): string[] {
+    return configService
+      .get<string>('CALLING_ROLLOUT_USER_IDS', '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * The production Stream app's id. When set, boot refuses a mismatch: a
+   * non-production backend whose key belongs to this app (staging test calls
+   * would ring real users), or a production backend whose key doesn't.
+   */
+  static get STREAM_PRODUCTION_APP_ID(): string {
+    return configService.get<string>('STREAM_PRODUCTION_APP_ID', '').trim();
+  }
+
+  /**
+   * Monthly participant-minute allowance of the Stream plan. The Maker plan has
+   * hard limits, so running out means calls stop working. Unset: no alert.
+   */
+  static get CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE(): number {
+    const n = Number(configService.get<string>('CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE', '0'));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
   /** Per-caller cap on call initiations in any rolling hour. */
   static get CALL_MAX_PER_HOUR(): number {
     const n = Number(configService.get<string>('CALL_MAX_PER_HOUR', '30'));

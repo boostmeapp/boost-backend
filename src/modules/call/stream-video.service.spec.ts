@@ -87,3 +87,68 @@ describe('StreamVideoService push provider check', () => {
     expect(warn).toHaveBeenCalledTimes(3); // one per provider, first probe only
   });
 });
+
+describe('StreamVideoService app identity check (Iteration 13)', () => {
+  const env: Record<string, string> = {};
+  let service: StreamVideoService;
+  let getApp: jest.Mock;
+  const verify = () => (service as any).verifyAppIdentity() as Promise<void>;
+
+  beforeAll(() => {
+    ENV.init({ get: (key: string, fallback: unknown) => env[key] ?? fallback } as any);
+  });
+
+  beforeEach(() => {
+    for (const k of Object.keys(env)) delete env[k];
+    getApp = jest.fn().mockResolvedValue({ app: { id: 111 } });
+    service = new StreamVideoService();
+    (service as any).client = { getApp };
+    for (const level of ['log', 'warn', 'error'] as const) {
+      jest.spyOn((service as any).logger, level).mockImplementation(() => undefined);
+    }
+  });
+
+  it('2. refuses a staging/dev backend holding PRODUCTION Stream credentials', async () => {
+    env.NODE_ENV = 'development';
+    env.STREAM_PRODUCTION_APP_ID = '111';
+
+    await expect(verify()).rejects.toThrow(/PRODUCTION Stream app \(111\)/);
+  });
+
+  it('refuses production on any other app', async () => {
+    env.NODE_ENV = 'production';
+    env.STREAM_PRODUCTION_APP_ID = '999';
+
+    await expect(verify()).rejects.toThrow(/production is using Stream app 111/);
+  });
+
+  it('refuses when STREAM_APP_ID disagrees with the key\'s real app', async () => {
+    env.STREAM_PRODUCTION_APP_ID = '999';
+    env.STREAM_APP_ID = '222';
+
+    await expect(verify()).rejects.toThrow(/STREAM_APP_ID is 222 but the API key belongs to app 111/);
+  });
+
+  it('passes on the right app in each environment', async () => {
+    env.STREAM_PRODUCTION_APP_ID = '999';
+    env.NODE_ENV = 'development';
+    await expect(verify()).resolves.toBeUndefined();
+
+    env.STREAM_PRODUCTION_APP_ID = '111';
+    env.NODE_ENV = 'production';
+    await expect(verify()).resolves.toBeUndefined();
+  });
+
+  it('skipped when STREAM_PRODUCTION_APP_ID is unset (local dev) — no network call', async () => {
+    await expect(verify()).resolves.toBeUndefined();
+    expect(getApp).not.toHaveBeenCalled();
+  });
+
+  it('Stream unreachable at boot: warns and boots, never blocks a deploy', async () => {
+    env.STREAM_PRODUCTION_APP_ID = '111';
+    getApp.mockRejectedValue(new Error('ETIMEDOUT'));
+
+    await expect(verify()).resolves.toBeUndefined();
+  });
+});
+
