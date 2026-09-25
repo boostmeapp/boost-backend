@@ -6,6 +6,14 @@ import {
 } from '@nestjs/common';
 import { StreamClient } from '@stream-io/node-sdk';
 import { ENV } from '../../config';
+import { CallErrorCode } from './call.constants';
+
+/** The identity Stream shows to the other party (incoming-call screen, CallKit). */
+export interface StreamUserProfile {
+  id: string;
+  name: string;
+  image?: string;
+}
 
 /** Stream connectivity as reported by health. Safe to expose — no secrets. */
 export interface StreamStatus {
@@ -75,9 +83,32 @@ export class StreamVideoService implements OnModuleInit {
   /** The shared client. Throws 503 when calling is disabled, so callers needn't check. */
   getClient(): StreamClient {
     if (!this.client) {
-      throw new ServiceUnavailableException('Calling is not available');
+      throw new ServiceUnavailableException({
+        message: 'Calling is not available',
+        code: CallErrorCode.CallingUnavailable,
+      });
     }
     return this.client;
+  }
+
+  /** The public app key. Safe to hand to clients; the secret never is. */
+  getApiKey(): string {
+    return this.getClient().apiKey;
+  }
+
+  /** Create or refresh the user on Stream so the other party sees a name and avatar. */
+  async upsertUser(user: StreamUserProfile): Promise<void> {
+    await this.getClient().upsertUsers([
+      { id: user.id, name: user.name, ...(user.image && { image: user.image }) },
+    ]);
+  }
+
+  /** Local HMAC signing — no network call. */
+  generateUserToken(userId: string, validitySeconds: number): string {
+    return this.getClient().generateUserToken({
+      user_id: userId,
+      validity_in_seconds: validitySeconds,
+    });
   }
 
   /** Last known connectivity, re-probed when older than the cache window or when forced. */

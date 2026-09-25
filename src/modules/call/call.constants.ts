@@ -25,6 +25,15 @@ export enum CallEndReason {
   AdminTerminated = 'admin_terminated',
 }
 
+/** Machine-readable `code` on call error responses, so the app can show the right copy. */
+export enum CallErrorCode {
+  CallingUnavailable = 'CALLING_UNAVAILABLE',
+  AccountBanned = 'ACCOUNT_BANNED',
+}
+
+/** Stream user tokens: long enough to avoid mid-call expiry, short enough to bound a leak. */
+export const STREAM_TOKEN_VALIDITY_SECONDS = 24 * 60 * 60;
+
 /** Statuses a call can still leave. Everything else is terminal. */
 export const LIVE_CALL_STATUSES: readonly CallStatus[] = [
   CallStatus.Ringing,

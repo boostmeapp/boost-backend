@@ -27,6 +27,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getResponse()
         : { message: 'Internal server error' };
 
+    // Machine-readable reason, e.g. { code: 'CALLEE_BUSY' }, so clients can pick
+    // the right copy without parsing the message.
+    const code =
+      typeof message === 'object' && typeof (message as any).code === 'string'
+        ? (message as any).code
+        : undefined;
+
     const errorResponse = {
       statusCode: status,
       timestamp: new Date().toISOString(),
@@ -36,6 +43,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof message === 'string'
           ? message
           : (message as any).message || 'An error occurred',
+      ...(code && { code }),
     };
 
     this.logger.error(
