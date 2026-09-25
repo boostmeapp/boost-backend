@@ -4,7 +4,7 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { StreamClient } from '@stream-io/node-sdk';
+import { StreamClient, WHEvent } from '@stream-io/node-sdk';
 import { ENV } from '../../config';
 import { CallErrorCode } from './call.constants';
 
@@ -122,6 +122,22 @@ export class StreamVideoService implements OnModuleInit {
     await this.getClient().upsertUsers(
       users.map((u) => ({ id: u.id, name: u.name, ...(u.image && { image: u.image }) })),
     );
+  }
+
+  /**
+   * Verify a webhook's X-Signature (HMAC-SHA256 of the raw body with the API
+   * secret) and parse it. Handles gzip. Throws InvalidWebhookError on a bad
+   * signature or malformed body.
+   */
+  verifyAndParseWebhook(rawBody: Buffer, signature: string): WHEvent {
+    return this.getClient().verifyAndParseWebhook(rawBody, signature);
+  }
+
+  /** How many participants are still in the call's live session. */
+  async getSessionParticipantCount(streamCallId: string): Promise<number> {
+    const [type, ...rest] = streamCallId.split(':');
+    const res = await this.getClient().video.call(type, rest.join(':')).get();
+    return res.call.session?.participants?.length ?? 0;
   }
 
   /**

@@ -140,6 +140,16 @@ export class ENV {
     return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-production').trim();
   }
 
+  /**
+   * Kill switch for webhook ingestion. When off, webhooks are still verified,
+   * logged and acknowledged, but never change call records — for staging
+   * environments pointed at a shared Stream app.
+   */
+  static get STREAM_WEBHOOK_ENABLED(): boolean {
+    const raw = configService.get<string>('STREAM_WEBHOOK_ENABLED', 'true');
+    return raw !== 'false' && raw !== '0';
+  }
+
   static get STREAM_FIREBASE_PROVIDER(): string {
     return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
   }

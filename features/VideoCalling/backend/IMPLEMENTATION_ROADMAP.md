@@ -604,11 +604,14 @@ Receive Stream's authoritative call events so the record self-heals when a clien
    | Stream event | Effect |
    |---|---|
    | `call.accepted` | → `active` |
-   | `call.rejected` | → `rejected` |
-   | `call.ended` | → `ended` |
-   | `call.session_participant_left` | if no participants remain → `ended` |
+   | `call.rejected` | reason `timeout` → `missed` · by the caller or reason `cancel` → `cancelled` · reason `busy` → `rejected` (`callee_busy`) · otherwise → `rejected` |
+   | `call.ended` | `active` → `ended` · still `ringing` → `cancelled` |
+   | `call.session_ended` | `active` → `ended` |
+   | `call.session_participant_left` | `active` and the Stream session is now empty (checked via the API) → `ended` (`network_failure`) |
    | `call.missed` | → `missed` |
    | others | log at debug, ack, ignore |
+
+   Raw body: `main.ts` registers its own `express.json()`, which consumes the body before Nest's `rawBody` option can capture it. The raw bytes are kept by that parser's `verify` hook instead (`common/middleware/json-with-raw-body.ts`), scoped to the webhook path.
 5. Route every event through `applyTransition()` from Iteration 7. The idempotency built there is what makes duplicate webhook delivery harmless.
 6. **Always return `200` quickly**, even for events you ignore or cannot map. A non-2xx triggers Stream's retry and can cascade. Do the work synchronously only if it is fast; otherwise enqueue to Bull and ack immediately.
 7. Honour `STREAM_WEBHOOK_ENABLED` — if false, verify the signature, log, and ack without mutating. Useful for staging environments pointed at a shared Stream app.

@@ -113,3 +113,24 @@ Record who holds these, so a rotation doesn't depend on one person:
 - Stream dashboard: `____`
 - Firebase project owner: `____`
 - Where the `.p8` file and service-account JSON are stored: `____`
+
+---
+
+## Webhook (call records self-heal)
+
+Stream reports call events (accepted, rejected, missed, ended, session ended) to `POST /api/calls/webhook`. This is what corrects a call record when a phone dies or loses signal without reporting.
+
+**Setup**, per Stream app, in the Stream dashboard → your app → **Webhooks** (under the app or Video settings; the label varies):
+- URL — dev app: `https://api-dev.boostra.me/api/calls/webhook`; production app: `https://prodapi.boostra.me/api/calls/webhook`.
+- Enable it for call events. Unhandled event types are acknowledged and ignored, so sending all events is fine.
+- No separate webhook secret: requests are signed with the app's API secret (`STREAM_API_SECRET`), and the backend rejects anything unsigned or tampered with a `401`.
+
+**Local development** needs a public URL: run a tunnel (`ngrok http 5005` or `cloudflared tunnel --url http://localhost:5005`) and point a Stream app you're allowed to change at `<tunnel>/api/calls/webhook`. Don't repoint the shared dev app at your laptop.
+
+**Staging on a shared Stream app:** set `STREAM_WEBHOOK_ENABLED=false` there. Webhooks are still verified and logged but change nothing.
+
+**"Call records stuck `active`"** — check in this order:
+1. Stream dashboard → Webhooks → delivery log: are deliveries to our URL failing?
+2. Backend logs for `Rejected unverified Stream webhook`: the API secret differs between the backend and that Stream app.
+3. Backend logs for `CallWebhookService`: events arriving but refused as illegal transitions.
+4. The Iteration 9 sweeper closes anything still stuck.
