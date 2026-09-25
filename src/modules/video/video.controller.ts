@@ -14,7 +14,7 @@ import {
 import { VideoService } from './video.service';
 import { CreateVideoDto, UpdateVideoDto } from './dto';
 import { JwtAuthGuard, OptionalJwtAuthGuard } from '../../common/guards';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, Public } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
 
 
@@ -68,6 +68,14 @@ export class VideoController {
   @UseGuards(JwtAuthGuard)
   async remove(@Param('id') id: string, @CurrentUser() user: User) {
     await this.videoService.remove(id, user.id);
+  }
+
+  // Public: a guest can share a link too.
+  @Post(':id/share')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  share(@Param('id') id: string) {
+    return this.videoService.incrementShareCount(id);
   }
 
   @Post(':id/like')

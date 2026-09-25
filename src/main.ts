@@ -77,7 +77,14 @@ async function bootstrap() {
   app.use(require('express').urlencoded({ limit: '10mb', extended: true }));
 
   app.setGlobalPrefix(ENV.API_PREFIX, {
-    exclude: ['reset-password'],
+    // Apple and Google only fetch the link files from the domain root, and a
+    // shared link has no /api in it either.
+    exclude: [
+      'reset-password',
+      '.well-known/apple-app-site-association',
+      '.well-known/assetlinks.json',
+      'video/:id',
+    ],
   });
 
   // Global validation pipe with production settings

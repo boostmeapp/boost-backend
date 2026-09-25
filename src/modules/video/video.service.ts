@@ -291,6 +291,20 @@ export class VideoService {
   }
 
   /**
+   * Count a share. Called when the OS share sheet reports a completed share;
+   * deliberately not deduplicated, since sharing twice is two shares.
+   */
+  async incrementShareCount(id: string): Promise<{ shareCount: number }> {
+    const video = await this.videoModel
+      .findByIdAndUpdate(id, { $inc: { shareCount: 1 } }, { new: true })
+      .select('shareCount')
+      .lean();
+
+    if (!video) throw new NotFoundException('Video not found');
+    return { shareCount: video.shareCount || 0 };
+  }
+
+  /**
    * Get user's videos
    */
   async getUserVideos(userId: string, page: number = 1, limit: number = 20, currentUserId?: string) {

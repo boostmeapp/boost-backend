@@ -169,6 +169,32 @@ export class ENV {
     return Number(configService.get<string>('BOOST_VIEWS_PER_COIN', '4'));
   }
 
+  // ── Shared links (universal / app links) ──
+  static get APPLE_TEAM_ID(): string {
+    return configService.get<string>('APPLE_TEAM_ID', 'MYJNL7NN38');
+  }
+
+  static get IOS_BUNDLE_ID(): string {
+    return configService.get<string>('IOS_BUNDLE_ID', 'com.boostra.mobile');
+  }
+
+  static get IOS_APP_STORE_ID(): string {
+    return configService.get<string>('IOS_APP_STORE_ID', '6805147056');
+  }
+
+  static get ANDROID_PACKAGE(): string {
+    return configService.get<string>('ANDROID_PACKAGE', 'com.boostra.app');
+  }
+
+  /** Play signing SHA-256s, comma-separated. Android links need at least one. */
+  static get ANDROID_CERT_FINGERPRINTS(): string[] {
+    return configService
+      .get<string>('ANDROID_CERT_FINGERPRINTS', '')
+      .split(',')
+      .map((f) => f.trim())
+      .filter(Boolean);
+  }
+
   // RevenueCat webhook Authorization header secret
   static get REVENUECAT_WEBHOOK_SECRET(): string {
     return configService.get<string>('REVENUECAT_WEBHOOK_SECRET', '');
