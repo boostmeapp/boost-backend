@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
@@ -27,5 +27,32 @@ export class CallController {
   @HttpCode(HttpStatus.CREATED)
   initiate(@CurrentUser() user: User, @Body() dto: InitiateCallDto) {
     return this.callService.initiate(user, dto);
+  }
+
+  // Lifecycle reports. The client acts through the Stream SDK first (that is
+  // what makes it instant), then tells us. All idempotent.
+
+  @Post(':id/accept')
+  @HttpCode(HttpStatus.OK)
+  accept(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.callService.performAction(user, id, 'accept');
+  }
+
+  @Post(':id/reject')
+  @HttpCode(HttpStatus.OK)
+  reject(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.callService.performAction(user, id, 'reject');
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.callService.performAction(user, id, 'cancel');
+  }
+
+  @Post(':id/end')
+  @HttpCode(HttpStatus.OK)
+  end(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.callService.performAction(user, id, 'end');
   }
 }

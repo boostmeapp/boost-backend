@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -22,6 +23,9 @@ import { ENV } from '../../config';
 import {
   ApnsEnvironment,
   CALL_INIT_LOCK_TTL_SECONDS,
+  CALL_TRANSITIONS,
+  DEFAULT_END_REASON,
+  isTerminalStatus,
   CallEndReason,
   CallErrorCode,
   CallStatus,
@@ -55,6 +59,43 @@ export interface InitiateCallResponse {
   callee: StreamUserProfile;
   createdAt: Date;
 }
+
+/** What a participant reports through /calls/:id/<action>. */
+export type CallAction = 'accept' | 'reject' | 'cancel' | 'end';
+
+export interface CallSummary {
+  callId: string;
+  status: CallStatus;
+  callType: CallType;
+  answeredAt: Date | null;
+  endedAt: Date | null;
+  durationSeconds: number | null;
+  endedReason: CallEndReason | null;
+}
+
+export interface TransitionResult {
+  call: Call;
+  /** False when the call already held the target status — an idempotent no-op. */
+  changed: boolean;
+}
+
+const ACTION_TARGET: Record<CallAction, CallStatus> = {
+  accept: CallStatus.Active,
+  reject: CallStatus.Rejected,
+  cancel: CallStatus.Cancelled,
+  end: CallStatus.Ended,
+};
+
+/** Who may perform each action, beyond being a participant. */
+const ACTION_ROLE: Record<CallAction, 'initiator' | 'callee' | 'any'> = {
+  accept: 'callee',
+  reject: 'callee',
+  cancel: 'initiator',
+  end: 'any',
+};
+
+/** Retries when a concurrent writer moves the status between our read and write. */
+const TRANSITION_ATTEMPTS = 3;
 
 @Injectable()
 export class CallService {
@@ -225,6 +266,195 @@ export class CallService {
       callType,
       callee: calleeProfile,
       createdAt: call.createdAt,
+    };
+  }
+
+  /**
+   * A participant reports accept / reject / cancel / end. Record-keeping, not
+   * control: the client already did it through the Stream SDK. The webhook
+   * (Iteration 8) is the backstop when a client never reports.
+   */
+  async performAction(
+    user: User,
+    callId: string,
+    action: CallAction,
+  ): Promise<CallSummary> {
+    const actorId = user._id.toString();
+    const call = await this.findCallOrThrow(callId);
+
+    // The call id alone is not authorization.
+    if (!call.participants.some((p) => String(p) === actorId)) {
+      throw new ForbiddenException({
+        message: 'You are not part of this call',
+        code: CallErrorCode.NotParticipant,
+      });
+    }
+
+    const isInitiator = String(call.initiator) === actorId;
+    const role = ACTION_ROLE[action];
+    if (
+      (role === 'initiator' && !isInitiator) ||
+      (role === 'callee' && isInitiator)
+    ) {
+      throw new ForbiddenException({
+        message: `You can't ${action} this call`,
+        code: CallErrorCode.ActionNotAllowed,
+      });
+    }
+
+    const { call: updated } = await this.applyTransition(
+      call._id,
+      ACTION_TARGET[action],
+      { actorId },
+    );
+
+    // TODO(Iteration 9): remove the pending ring-timeout job on accept/reject/cancel.
+
+    return this.toSummary(updated);
+  }
+
+  /**
+   * The one place call status changes. Enforces CALL_TRANSITIONS, is
+   * idempotent (re-applying the current status is a no-op success, because
+   * clients and webhooks both report the same events), and atomic (the write
+   * is conditioned on the status we read, so concurrent writers can't both win).
+   */
+  async applyTransition(
+    callId: Types.ObjectId | string,
+    next: CallStatus,
+    opts: { actorId?: string | null; reason?: CallEndReason } = {},
+  ): Promise<TransitionResult> {
+    for (let attempt = 0; attempt < TRANSITION_ATTEMPTS; attempt++) {
+      const current = await this.callModel.findById(callId).lean<Call>();
+      if (!current) {
+        throw new NotFoundException({
+          message: 'Call not found',
+          code: CallErrorCode.CallNotFound,
+        });
+      }
+
+      if (current.status === next) {
+        return { call: current, changed: false };
+      }
+
+      if (!CALL_TRANSITIONS[current.status].includes(next)) {
+        const ended = isTerminalStatus(current.status);
+        // Expected under normal races (late accept after timeout, duplicate
+        // end); not worth more than an info line.
+        this.logger.log(
+          `Call ${current._id} ${current.status} -> ${next} refused (illegal transition)`,
+        );
+        throw new ConflictException({
+          message: ended ? 'This call has already ended' : `Can't move a ${current.status} call to ${next}`,
+          code: ended ? CallErrorCode.CallAlreadyEnded : CallErrorCode.IllegalTransition,
+        });
+      }
+
+      const now = new Date();
+      const set: Record<string, unknown> = { status: next };
+      const update: Record<string, unknown> = { $set: set };
+
+      if (next === CallStatus.Active) set.answeredAt = now;
+
+      if (isTerminalStatus(next)) {
+        set.endedAt = now;
+        set.durationSeconds = current.answeredAt
+          ? Math.max(0, Math.round((now.getTime() - new Date(current.answeredAt).getTime()) / 1000))
+          : 0;
+        set.endedReason = opts.reason ?? DEFAULT_END_REASON[next];
+        if (opts.actorId) set.endedBy = new Types.ObjectId(opts.actorId);
+      }
+
+      if (next === CallStatus.Rejected && opts.actorId) {
+        update.$addToSet = { rejectedBy: new Types.ObjectId(opts.actorId) };
+      }
+
+      const updated = await this.callModel
+        .findOneAndUpdate({ _id: current._id, status: current.status }, update, { new: true })
+        .lean<Call>();
+
+      if (updated) {
+        this.logger.log(
+          `Call ${updated._id} ${current.status} -> ${next}` +
+            ` actor=${opts.actorId ?? 'system'}` +
+            (set.endedReason ? ` reason=${set.endedReason}` : '') +
+            (isTerminalStatus(next) ? ` duration=${set.durationSeconds}s` : ''),
+        );
+        return { call: updated, changed: true };
+      }
+      // Someone else moved it between our read and write — re-evaluate.
+    }
+
+    throw new ConflictException({
+      message: 'The call changed while updating. Please try again.',
+      code: CallErrorCode.IllegalTransition,
+    });
+  }
+
+  /**
+   * End every live call between two users — used when one blocks the other
+   * mid-call. Ringing calls become cancelled, active ones ended, both with
+   * reason `blocked`; then Stream drops both clients. Never throws: a block
+   * must succeed even if termination partly fails.
+   */
+  async terminateBetween(
+    userA: string,
+    userB: string,
+    opts: { actorId?: string; reason?: CallEndReason } = {},
+  ): Promise<number> {
+    const reason = opts.reason ?? CallEndReason.Blocked;
+    const live = await this.callModel
+      .find({
+        participants: { $all: [new Types.ObjectId(userA), new Types.ObjectId(userB)] },
+        status: { $in: LIVE_CALL_STATUSES },
+      })
+      .select('_id status streamCallId')
+      .lean();
+
+    let terminated = 0;
+    for (const call of live) {
+      const next = call.status === CallStatus.Active ? CallStatus.Ended : CallStatus.Cancelled;
+      try {
+        const { changed } = await this.applyTransition(call._id, next, {
+          actorId: opts.actorId,
+          reason,
+        });
+        if (changed) terminated++;
+      } catch (err) {
+        // Already ended by someone else — fine; still make sure Stream drops it.
+        this.logger.warn(`terminateBetween: ${call._id} not transitioned: ${(err as Error).message}`);
+      }
+      try {
+        await this.streamVideo.endCall(call.streamCallId);
+      } catch (err) {
+        this.logger.error(`terminateBetween: Stream end failed for ${call._id}: ${(err as Error).message}`);
+      }
+    }
+    return terminated;
+  }
+
+  private async findCallOrThrow(callId: string): Promise<Call> {
+    const call = Types.ObjectId.isValid(callId)
+      ? await this.callModel.findById(callId).lean<Call>()
+      : null;
+    if (!call) {
+      throw new NotFoundException({
+        message: 'Call not found',
+        code: CallErrorCode.CallNotFound,
+      });
+    }
+    return call;
+  }
+
+  private toSummary(call: Call): CallSummary {
+    return {
+      callId: String(call._id),
+      status: call.status,
+      callType: call.callType,
+      answeredAt: call.answeredAt ?? null,
+      endedAt: call.endedAt ?? null,
+      durationSeconds: call.durationSeconds ?? null,
+      endedReason: call.endedReason ?? null,
     };
   }
 

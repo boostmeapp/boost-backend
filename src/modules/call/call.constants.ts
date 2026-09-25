@@ -38,7 +38,46 @@ export enum CallErrorCode {
   AlreadyInCall = 'ALREADY_IN_CALL',
   InvalidConversation = 'INVALID_CONVERSATION',
   CallFailed = 'CALL_FAILED',
+  CallNotFound = 'CALL_NOT_FOUND',
+  NotParticipant = 'NOT_PARTICIPANT',
+  /** The call has already moved on, e.g. accepting a call that was cancelled. */
+  CallAlreadyEnded = 'CALL_ALREADY_ENDED',
+  /** A participant, but the wrong one — e.g. the caller trying to accept. */
+  ActionNotAllowed = 'ACTION_NOT_ALLOWED',
+  IllegalTransition = 'ILLEGAL_TRANSITION',
 }
+
+/**
+ * The only legal status moves. Data, enforced in one place (applyTransition).
+ * Terminal statuses map to nothing.
+ */
+export const CALL_TRANSITIONS: Readonly<Record<CallStatus, readonly CallStatus[]>> = {
+  [CallStatus.Ringing]: [
+    CallStatus.Active,
+    CallStatus.Rejected,
+    CallStatus.Cancelled,
+    CallStatus.Missed,
+    CallStatus.Failed,
+  ],
+  [CallStatus.Active]: [CallStatus.Ended, CallStatus.Failed],
+  [CallStatus.Ended]: [],
+  [CallStatus.Rejected]: [],
+  [CallStatus.Cancelled]: [],
+  [CallStatus.Missed]: [],
+  [CallStatus.Failed]: [],
+};
+
+export const isTerminalStatus = (status: CallStatus): boolean =>
+  CALL_TRANSITIONS[status].length === 0;
+
+/** The reason recorded when a transition doesn't specify one. */
+export const DEFAULT_END_REASON: Partial<Record<CallStatus, CallEndReason>> = {
+  [CallStatus.Ended]: CallEndReason.HungUp,
+  [CallStatus.Rejected]: CallEndReason.Rejected,
+  [CallStatus.Cancelled]: CallEndReason.CancelledByCaller,
+  [CallStatus.Missed]: CallEndReason.RingTimeout,
+  [CallStatus.Failed]: CallEndReason.NetworkFailure,
+};
 
 /**
  * Which APNs environment the app build is signed for. Mirrors APNS_MODE in the

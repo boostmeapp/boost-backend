@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -17,17 +18,22 @@ import {
 import { User } from '../../database/schemas/user/user.schema';
 import { Comment } from '../comments/comment.schema';
 import { CreateReportDto } from './dto/create-report.dto';
+import { CallService } from '../call/call.service';
+import { CallEndReason } from '../call/call.constants';
 
 // Number of distinct reports after which content is auto-hidden pending review.
 const AUTO_REMOVE_THRESHOLD = 5;
 
 @Injectable()
 export class ModerationService {
+  private readonly logger = new Logger(ModerationService.name);
+
   constructor(
     @InjectModel(Report.name) private reportModel: Model<Report>,
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(Comment.name) private commentModel: Model<Comment>,
     @InjectModel(User.name) private userModel: Model<User>,
+    private readonly callService: CallService,
   ) {}
 
   /**
@@ -156,6 +162,19 @@ export class ModerationService {
 
     // $addToSet is idempotent; modifiedCount tells us whether it was new.
     const alreadyBlocked = result.modifiedCount === 0;
+
+    // A block must also end any live call between them. Run on repeat blocks
+    // too — cheap, and it closes a call started in a race with the first block.
+    // terminateBetween never throws; the guard is belt and braces so the block
+    // itself can't fail on a calling problem.
+    try {
+      await this.callService.terminateBetween(userId, targetUserId, {
+        actorId: userId,
+        reason: CallEndReason.Blocked,
+      });
+    } catch (err) {
+      this.logger.error(`Block ${userId} -> ${targetUserId}: call termination failed: ${(err as Error).message}`);
+    }
 
     return {
       success: true,

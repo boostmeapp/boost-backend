@@ -125,6 +125,16 @@ export class StreamVideoService implements OnModuleInit {
   }
 
   /**
+   * End a call for everyone — stops ringing and drops both clients. For
+   * administrative termination (mid-call block, moderation, ring timeout).
+   * Idempotent in effect: ending an already-ended call is harmless.
+   */
+  async endCall(streamCallId: string): Promise<void> {
+    const [type, ...rest] = streamCallId.split(':');
+    await this.getClient().video.call(type, rest.join(':')).end();
+  }
+
+  /**
    * Create the call on Stream with ringing on. Stream then rings the callee's
    * devices (in-app, and VoIP/FCM push once Iteration 6 is configured).
    */
