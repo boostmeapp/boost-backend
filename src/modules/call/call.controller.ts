@@ -1,9 +1,10 @@
-import { Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
 import { CallService } from './call.service';
+import { InitiateCallDto } from './dto/initiate-call.dto';
 
 @Controller('calls')
 @UseGuards(JwtAuthGuard)
@@ -17,5 +18,13 @@ export class CallController {
   @HttpCode(HttpStatus.OK)
   token(@CurrentUser() user: User) {
     return this.callService.issueToken(user);
+  }
+
+  // A coarse burst cap; the real per-caller limit is Iteration 11.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  initiate(@CurrentUser() user: User, @Body() dto: InitiateCallDto) {
+    return this.callService.initiate(user, dto);
   }
 }

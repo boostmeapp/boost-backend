@@ -34,7 +34,17 @@ export enum CallErrorCode {
   UserUnavailable = 'USER_UNAVAILABLE',
   NotConnected = 'NOT_CONNECTED',
   CallingRestricted = 'CALLING_RESTRICTED',
+  CalleeBusy = 'CALLEE_BUSY',
+  AlreadyInCall = 'ALREADY_IN_CALL',
+  InvalidConversation = 'INVALID_CONVERSATION',
+  CallFailed = 'CALL_FAILED',
 }
+
+/** Stream call type. `default` has ringing enabled — verified in the dashboard. */
+export const STREAM_CALL_TYPE = 'default';
+
+/** Per-user initiation lock. Covers busy-check-and-persist only, so a few seconds is ample. */
+export const CALL_INIT_LOCK_TTL_SECONDS = 5;
 
 /**
  * Why a call was refused, for logs and tests only. Never sent to the client:

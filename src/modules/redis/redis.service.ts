@@ -113,6 +113,20 @@ export class RedisService implements OnModuleDestroy {
     return count;
   }
 
+  /**
+   * Delete only if the key still holds `value`. Releases a lock taken with
+   * setIfAbsent without ever deleting one that expired and was re-taken.
+   */
+  async deleteIfEquals(key: string, value: string): Promise<boolean> {
+    const res = await this.client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      this.getEnvKey(key),
+      value,
+    );
+    return res === 1;
+  }
+
   async existsKey(key: string): Promise<boolean> {
     return (await this.client.exists(this.getEnvKey(key))) === 1;
   }

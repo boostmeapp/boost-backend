@@ -98,9 +98,38 @@ export class StreamVideoService implements OnModuleInit {
 
   /** Create or refresh the user on Stream so the other party sees a name and avatar. */
   async upsertUser(user: StreamUserProfile): Promise<void> {
-    await this.getClient().upsertUsers([
-      { id: user.id, name: user.name, ...(user.image && { image: user.image }) },
-    ]);
+    await this.upsertUsers([user]);
+  }
+
+  async upsertUsers(users: StreamUserProfile[]): Promise<void> {
+    await this.getClient().upsertUsers(
+      users.map((u) => ({ id: u.id, name: u.name, ...(u.image && { image: u.image }) })),
+    );
+  }
+
+  /**
+   * Create the call on Stream with ringing on. Stream then rings the callee's
+   * devices (in-app, and VoIP/FCM push once Iteration 6 is configured).
+   */
+  async createRingingCall(args: {
+    type: string;
+    id: string;
+    callerId: string;
+    calleeId: string;
+    video: boolean;
+    custom: Record<string, unknown>;
+  }): Promise<void> {
+    await this.getClient()
+      .video.call(args.type, args.id)
+      .getOrCreate({
+        ring: true,
+        video: args.video,
+        data: {
+          created_by_id: args.callerId,
+          members: [{ user_id: args.callerId }, { user_id: args.calleeId }],
+          custom: args.custom,
+        },
+      });
   }
 
   /** Local HMAC signing — no network call. */

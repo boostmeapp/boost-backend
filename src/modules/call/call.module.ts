@@ -7,8 +7,16 @@ import { CallAuthorizationService } from './call-authorization.service';
 import { CallController } from './call.controller';
 import { ChatModule } from '../chat/chat.module';
 import { Call, CallSchema } from '../../database/schemas/call/call.schema';
-import { Follow, FollowSchema, User, UserSchema } from '../../database/schemas';
+import {
+  Conversation,
+  ConversationSchema,
+  Follow,
+  FollowSchema,
+  User,
+  UserSchema,
+} from '../../database/schemas';
 
+// RedisService comes from the global RedisModule.
 @Module({
   imports: [
     ConfigModule,
@@ -16,6 +24,7 @@ import { Follow, FollowSchema, User, UserSchema } from '../../database/schemas';
       { name: Call.name, schema: CallSchema },
       { name: User.name, schema: UserSchema },
       { name: Follow.name, schema: FollowSchema },
+      { name: Conversation.name, schema: ConversationSchema },
     ]),
     // ChatService.isBlockedBetween is the single source of truth for blocks.
     ChatModule,
