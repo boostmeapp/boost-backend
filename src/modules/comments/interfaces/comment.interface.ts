@@ -8,6 +8,8 @@ export interface CommentResponse {
   likeCount: number;
   isLiked?: boolean;
   isReported?: boolean;
+  /** Visible replies; only set on top-level comments. */
+  replyCount?: number;
   createdAt: Date;
   user: {
     _id: string;

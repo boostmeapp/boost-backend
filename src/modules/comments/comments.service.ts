@@ -127,6 +127,35 @@ export class CommentsService {
     return new Set(likes.map((like) => like.commentId.toString()));
   }
 
+  /** Tells the comment's author that someone replied. Errors are swallowed. */
+  private async notifyReply(
+    actorId: string,
+    commentOwnerId: Types.ObjectId,
+    video: any,
+    content: string,
+  ) {
+    if (!commentOwnerId || String(commentOwnerId) === actorId) return;
+
+    const actor = await this.userModel
+      .findById(actorId)
+      .select('firstName lastName username')
+      .lean();
+
+    const actorName = displayName(actor);
+
+    void this.notificationService.notify({
+      users: String(commentOwnerId),
+      actor: actorId,
+      type: NotificationType.Comment,
+      title: actorName,
+      body: `${actorName} replied to your comment`,
+      metadata: {
+        videoId: String(video._id),
+        preview: content.slice(0, 120),
+      },
+    });
+  }
+
   /** Tells the video owner about a new comment. Errors are swallowed. */
   private async notifyComment(actorId: string, video: any, content: string) {
     if (!video?.user) return;
@@ -151,6 +180,18 @@ export class CommentsService {
     });
   }
 
+  /**
+   * `parentComment` is a Mixed path in this schema, so Mongoose does not cast
+   * ids for it: older rows hold a string and newer ones an ObjectId. Matching
+   * on both is the only way to see every reply.
+   */
+  private idForms(id: string | Types.ObjectId): (string | Types.ObjectId)[] {
+    const text = String(id);
+    const forms: (string | Types.ObjectId)[] = [text];
+    if (Types.ObjectId.isValid(text)) forms.push(new Types.ObjectId(text));
+    return forms;
+  }
+
   async create(userId: string, dto: CreateCommentDto) {
     // Content filter: reject objectionable language in comments
     if (!scanText(dto.content).clean) {
@@ -162,10 +203,32 @@ export class CommentsService {
     const video = await this.videoModel.findById(dto.videoId);
     if (!video) throw new NotFoundException('Video not found');
 
+    // Two levels only: replying to a reply attaches to its parent comment,
+    // so a thread can never nest deeper than comment → replies.
+    let parent: { _id: Types.ObjectId; user: Types.ObjectId } | null = null;
+    if (dto.parentCommentId) {
+      const target = await this.commentModel
+        .findOne({ _id: dto.parentCommentId, isDeleted: false })
+        .select('user parentComment')
+        .lean();
+      if (!target) throw new NotFoundException('Comment not found');
+
+      const rootId = (target.parentComment
+        ? new Types.ObjectId(String(target.parentComment))
+        : target._id) as Types.ObjectId;
+      const root =
+        String(rootId) === String(target._id)
+          ? target
+          : await this.commentModel.findById(rootId).select('user').lean();
+      if (!root) throw new NotFoundException('Comment not found');
+
+      parent = { _id: rootId, user: root.user as Types.ObjectId };
+    }
+
     const comment = await this.commentModel.create({
       video: dto.videoId,
       user: userId,
-      parentComment: dto.parentCommentId || null,
+      parentComment: parent?._id ?? null,
       content: dto.content,
     });
 
@@ -175,7 +238,8 @@ export class CommentsService {
       { $inc: { commentCount: 1 } },
     );
 
-    void this.notifyComment(userId, video, dto.content);
+    if (parent) void this.notifyReply(userId, parent.user, video, dto.content);
+    else void this.notifyComment(userId, video, dto.content);
     void this.boostEngagement.onVideoEngagement(userId, String(dto.videoId), 'comments');
 
     return comment;
@@ -200,7 +264,35 @@ async getVideoComments(
     .limit(limit)
     .lean();
 
-  return this.withUserState(comments, userId);
+  const withState = await this.withUserState(comments, userId);
+  return this.withReplyCounts(withState);
+}
+
+/** How many visible replies each comment has, for the "View replies" row. */
+private async withReplyCounts(comments: any[]): Promise<CommentResponse[]> {
+  if (!comments.length) return comments as CommentResponse[];
+
+  const counts = await this.commentModel.aggregate<{
+    _id: Types.ObjectId;
+    count: number;
+  }>([
+    {
+      $match: {
+        parentComment: {
+          $in: comments.flatMap((c) => this.idForms(c._id as Types.ObjectId)),
+        },
+        isDeleted: false,
+        isRemoved: false,
+      },
+    },
+    { $group: { _id: '$parentComment', count: { $sum: 1 } } },
+  ]);
+
+  const byParent = new Map(counts.map((c) => [String(c._id), c.count]));
+  return comments.map((c) => ({
+    ...c,
+    replyCount: byParent.get(String(c._id)) || 0,
+  })) as CommentResponse[];
 }
 
 /** Attach the requesting user's like and report state to a list of lean comments. */
@@ -226,7 +318,7 @@ private async withUserState(
  async getReplies(commentId: string, userId?: string): Promise<CommentResponse[]> {
   const replies = await this.commentModel
     .find({
-      parentComment: commentId,
+      parentComment: { $in: this.idForms(commentId) },
       isDeleted: false,
       isRemoved: false,
     })
@@ -262,14 +354,16 @@ async softDelete(commentId: string, userId: string) {
     throw new NotFoundException('Not allowed');
   }
 
+  const replyForms = this.idForms(comment._id);
+
   const repliesCount = await this.commentModel.countDocuments({
-    parentComment: comment._id,
+    parentComment: { $in: replyForms },
     isDeleted: false,
   });
 
   await this.commentModel.updateMany(
     {
-      $or: [{ _id: comment._id }, { parentComment: comment._id }],
+      $or: [{ _id: comment._id }, { parentComment: { $in: replyForms } }],
     },
     { $set: { isDeleted: true } },
   );
