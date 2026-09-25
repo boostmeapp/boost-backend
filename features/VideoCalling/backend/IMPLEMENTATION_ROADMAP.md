@@ -295,11 +295,11 @@ Decide, server-side, whether user A may call user B. This is the core piece of b
    1. **Self-call** — caller `===` callee → reject `CANNOT_CALL_SELF`.
    2. **Callee exists and is active** — not deleted, not banned → `USER_UNAVAILABLE`.
    3. **Block in either direction** — query the moderation/block source used by `chat.service.ts`. Reject `BLOCKED`. Return the *same* generic message in both directions so a blocked user cannot detect that they are blocked.
-   4. **Relationship requirement** — this is a product decision; implement it as a configurable policy so it can change without a rewrite. Recommended default: an **existing conversation** or a **mutual follow**. Reject `NOT_CONNECTED`.
+   4. **Relationship requirement** — this is a product decision; implement it as a configurable policy so it can change without a rewrite. **Decided: mutual follow only** — both users follow each other. Message history does not count. Reject `NOT_CONNECTED`.
    5. **Caller not banned from calling specifically** — a moderation flag separate from a full ban, for call-specific abuse. Reject `CALLING_RESTRICTED`.
 3. Put the policy behind a small, named strategy object rather than inline `if`s, so the rule is readable and testable:
    ```ts
-   const CALL_POLICY = { requireMutualFollowOrConversation: true };
+   const CALL_POLICY = { requireMutualFollow: true };
    ```
 4. Reuse the block-list lookup from `chat.service.ts` rather than reimplementing it — a divergence between "can message" and "can call" is a moderation hole.
 
@@ -326,8 +326,8 @@ Unit tests with mocked models, one per branch:
 4. Callee blocked caller → `BLOCKED`, identical response body to the above.
 5. No relationship, policy on → `NOT_CONNECTED`.
 6. No relationship, policy off → passes.
-7. Existing conversation → passes.
-8. Mutual follow, no conversation → passes.
+7. Mutual follow → passes.
+8. One-way follow (either direction), or messages exchanged without a mutual follow → `NOT_CONNECTED`.
 
 ### Expected result
 A single, fully unit-tested gate that every call initiation must pass.
@@ -896,9 +896,9 @@ Close the gaps between "calls work" and "a complete calling product" that the mo
    - Set it in `POST /calls/token` (only a calling-capable build ever calls that endpoint). Write at most once per 24h per user — compare before updating, so token refreshes do not become a write per request.
    - In `CallService.initiate()`, **after** `assertCanCall()` and **before** the busy check: callee without `callingCapableAt` → `409 CALLEE_UNSUPPORTED`. No record, no Stream call. Running it after authorization means a blocked caller still gets the generic response and learns nothing.
 2. **"Who can call me" — a per-user setting.** Iteration 4's `CALL_POLICY` is an app-wide rule; users need their own control.
-   - Add `callPrivacy: 'everyone' | 'connections' | 'nobody'` to `user.schema.ts`, default `'connections'` (identical to the Iteration 4 policy, so existing behaviour does not change for anyone who never opens the setting).
+   - Add `callPrivacy: 'everyone' | 'mutual_follows' | 'nobody'` to `user.schema.ts`, default `'mutual_follows'` (identical to the Iteration 4 policy, so existing behaviour does not change for anyone who never opens the setting).
    - `GET /calls/settings` → `{ callPrivacy }`; `PATCH /calls/settings` with a validated DTO. Keep these in the call module rather than widening `users.controller.ts`.
-   - In `CallAuthorizationService`, after the block check: `nobody` → `CALLS_NOT_ACCEPTED`; `connections` → the existing relationship check (`NOT_CONNECTED`); `everyone` → skip the relationship check. Self-call, block, ban and `callingRestricted` checks still apply to everyone.
+   - In `CallAuthorizationService`, after the block check: `nobody` → `CALLS_NOT_ACCEPTED`; `mutual_follows` → the existing mutual-follow check (`NOT_CONNECTED`); `everyone` → skip the relationship check. Self-call, block, ban and `callingRestricted` checks still apply to everyone.
 3. **Pre-flight check — `GET /calls/can-call/:userId`.** Returns `{ allowed: boolean, code?: string }` by running the same `assertCanCall()` + capability + busy logic *without* creating anything. This lets the client disable or hide the call button with the right reason instead of letting the user tap and fail (frontend Iteration 14). Blocked and unavailable must still return the identical `USER_UNAVAILABLE`. Throttle it; it is called on every chat and profile view.
 4. **User-owned history — hide, never delete.**
    - Add `hiddenFor: ObjectId[]` to `call.schema.ts` (additive; no migration needed).
@@ -955,7 +955,7 @@ POST /calls/:id/stats { ..., rating, issues }               ──> metadata.fee
 ### Testing procedure
 1. User who has never fetched a token → calling them returns `409 CALLEE_UNSUPPORTED`; nothing is written to Mongo or Stream.
 2. Fetch a token as that user → the next call rings normally. Fetch 10 tokens in a row → `callingCapableAt` is written once.
-3. `callPrivacy: nobody` → `403 CALLS_NOT_ACCEPTED`. `everyone` + no relationship → allowed. `connections` → the Iteration 4 behaviour.
+3. `callPrivacy: nobody` → `403 CALLS_NOT_ACCEPTED`. `everyone` + no relationship → allowed. `mutual_follows` → the Iteration 4 behaviour.
 4. Callee has blocked caller *and* set `nobody` → the caller gets `USER_UNAVAILABLE`, not `CALLS_NOT_ACCEPTED`.
 5. `can-call` matches the `POST /calls` outcome for every case above.
 6. `DELETE /calls/:id` → gone from my history, still in the other user's history.

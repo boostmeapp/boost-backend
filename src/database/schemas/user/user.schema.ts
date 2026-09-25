@@ -56,6 +56,11 @@ export class User extends Document {
   @Prop()
   bannedAt?: Date;
 
+  // Call-specific moderation, separate from a full ban: the user keeps the app
+  // but cannot place calls.
+  @Prop({ default: false })
+  callingRestricted: boolean;
+
   @Prop({ select: false })
   refreshToken?: string;
 

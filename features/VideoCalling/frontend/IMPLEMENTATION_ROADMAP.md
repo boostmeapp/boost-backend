@@ -1107,13 +1107,13 @@ Build the user-facing controls around calling that the mockups do not show: who 
 - **Backend Iteration 12** (settings, `can-call`, history hide, unseen count, call reports, feedback).
 
 ### Implementation steps
-1. **"Who can call me"** — `src/app/settings/call-privacy.jsx`, linked from the existing privacy/settings screen: *Everyone* / *People I'm connected with* (default) / *No one*. `GET` / `PATCH /calls/settings`. Update optimistically and roll back on failure.
+1. **"Who can call me"** — `src/app/settings/call-privacy.jsx`, linked from the existing privacy/settings screen: *Everyone* / *People who follow me back* (default) / *No one*. `GET` / `PATCH /calls/settings`. Update optimistically and roll back on failure.
 2. **Upgrade the Iteration 11 button states to the server's pre-flight.** Chat header and profile call buttons call `GET /calls/can-call/:userId` on screen focus (cache ~60s per user) and map the result:
    | Code | Button | Copy on tap |
    |---|---|---|
    | allowed | enabled | — |
    | `CALLS_NOT_ACCEPTED` | disabled | "{name} isn't accepting calls" |
-   | `NOT_CONNECTED` | disabled | "You can call {name} once you're connected" |
+   | `NOT_CONNECTED` | disabled | "You can call {name} once you follow each other" |
    | `CALLEE_UNSUPPORTED` | disabled | "{name} needs to update Boostra to receive calls" |
    | `CALLEE_BUSY` | enabled | handled by the outgoing screen at call time |
    | `USER_UNAVAILABLE` | hidden | — (never reveals a block) |
