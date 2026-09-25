@@ -59,6 +59,9 @@ export class ModerationService {
         .lean();
       if (!comment) throw new NotFoundException('Comment not found');
       targetUserId = comment.user as Types.ObjectId;
+    } else if (dto.contentType === ReportContentType.CALL) {
+      // Participants only; the reported user is the other side of the call.
+      targetUserId = await this.callService.resolveReportTarget(dto.contentId, reporterId);
     } else {
       const user = await this.userModel
         .findById(contentObjectId)

@@ -6,6 +6,8 @@ export enum ReportContentType {
   VIDEO = 'video',
   COMMENT = 'comment',
   USER = 'user',
+  /** contentId is the Call id; targetUser is the other participant. */
+  CALL = 'call',
 }
 
 export enum ReportReason {

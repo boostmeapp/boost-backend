@@ -45,6 +45,10 @@ export enum CallErrorCode {
   /** A participant, but the wrong one — e.g. the caller trying to accept. */
   ActionNotAllowed = 'ACTION_NOT_ALLOWED',
   CallRateLimited = 'CALL_RATE_LIMITED',
+  /** The callee has never run a build that can answer calls. */
+  CalleeUnsupported = 'CALLEE_UNSUPPORTED',
+  /** The callee's "Who can call me" is set to nobody. */
+  CallsNotAccepted = 'CALLS_NOT_ACCEPTED',
   IllegalTransition = 'ILLEGAL_TRANSITION',
 }
 
@@ -139,6 +143,27 @@ export enum CallDenialReason {
   CalleeUnavailable = 'callee_unavailable',
   Blocked = 'blocked',
   NotConnected = 'not_connected',
+  CallsNotAccepted = 'calls_not_accepted',
+}
+
+/** A user's "Who can call me" setting. */
+export enum CallPrivacy {
+  Everyone = 'everyone',
+  /** The default — identical to the app-wide mutual-follow policy. */
+  MutualFollows = 'mutual_follows',
+  Nobody = 'nobody',
+}
+
+/** callingCapableAt is refreshed at most this often, so token refreshes aren't a write each. */
+export const CALLING_CAPABLE_REFRESH_SECONDS = 24 * 60 * 60;
+
+/** Quick issue chips on the post-call rating. */
+export enum CallIssue {
+  Audio = 'audio',
+  Video = 'video',
+  Dropped = 'dropped',
+  Echo = 'echo',
+  Other = 'other',
 }
 
 /**

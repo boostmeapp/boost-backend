@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -91,10 +92,15 @@ describe('CallService', () => {
       }),
       updateOne: jest.fn().mockResolvedValue({}),
     };
+    // Callees are calling-capable unless a test says otherwise.
     userModel = {
       findById: jest.fn((id: string) => ({
-        select: () => ({ lean: async () => makeUser({ _id: new Types.ObjectId(id), username: 'bob' }) }),
+        select: () => ({
+          lean: async () =>
+            makeUser({ _id: new Types.ObjectId(id), username: 'bob', callingCapableAt: new Date() }),
+        }),
       })),
+      updateOne: jest.fn().mockResolvedValue({}),
     };
     conversationModel = { exists: jest.fn().mockResolvedValue({ _id: oid() }) };
     redis = new FakeRedis();
@@ -511,7 +517,6 @@ describe('CallService', () => {
     });
 
     it('a rate-limited caller creates nothing', async () => {
-      const { HttpException } = await import('@nestjs/common');
       callAbuse.assertWithinRateLimit.mockRejectedValue(new HttpException({ code: 'CALL_RATE_LIMITED' }, 429));
 
       const err = await service
@@ -572,6 +577,209 @@ describe('CallService', () => {
 
       expect(err).toBeInstanceOf(ForbiddenException);
       expect(callModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Iteration 12', () => {
+    const noCapability = () =>
+      userModel.findById.mockImplementation((id: string) => ({
+        select: () => ({ lean: async () => makeUser({ _id: new Types.ObjectId(id) }) }),
+      }));
+
+    describe('calling capability', () => {
+      it('1. a callee who never fetched a token → 409 CALLEE_UNSUPPORTED; nothing written, nothing rung', async () => {
+        noCapability();
+
+        const err = await service
+          .initiate(makeUser(), { calleeId: oid().toString(), callType: CallType.Audio })
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse().code).toBe('CALLEE_UNSUPPORTED');
+        expect(callModel.create).not.toHaveBeenCalled();
+        expect(streamVideo.createRingingCall).not.toHaveBeenCalled();
+      });
+
+      it('2. fetching a token stamps callingCapableAt with a conditional write', async () => {
+        const user = makeUser();
+
+        await service.issueToken(user);
+
+        const [filter, update] = userModel.updateOne.mock.calls[0];
+        expect(filter._id).toBe(user._id);
+        expect(filter.$or).toBeDefined(); // only when missing or stale
+        expect(update.$set.callingCapableAt).toBeInstanceOf(Date);
+      });
+
+      it('2b. repeat token fetches within 24h write nothing', async () => {
+        await service.issueToken(makeUser({ callingCapableAt: new Date(Date.now() - 3600_000) }));
+
+        expect(userModel.updateOne).not.toHaveBeenCalled();
+      });
+
+      it('a failed stamp never fails token issuance', async () => {
+        userModel.updateOne.mockRejectedValue(new Error('Mongo down'));
+
+        await expect(service.issueToken(makeUser())).resolves.toMatchObject({ token: 'signed-token' });
+      });
+    });
+
+    describe('canCall', () => {
+      it('allowed when every check passes', async () => {
+        await expect(service.canCall(makeUser(), oid().toString())).resolves.toEqual({ allowed: true });
+        expect(callModel.create).not.toHaveBeenCalled();
+      });
+
+      it('returns the refusal code instead of throwing', async () => {
+        callAuthorization.assertCanCall.mockRejectedValue(
+          new CallForbiddenException(CallErrorCode.UserUnavailable, 'x', CallDenialReason.Blocked),
+        );
+
+        await expect(service.canCall(makeUser(), oid().toString())).resolves.toEqual({
+          allowed: false,
+          code: CallErrorCode.UserUnavailable,
+        });
+      });
+
+      it('reports CALLEE_UNSUPPORTED and CALLEE_BUSY like initiate would', async () => {
+        noCapability();
+        expect((await service.canCall(makeUser(), oid().toString())).code).toBe('CALLEE_UNSUPPORTED');
+
+        userModel.findById.mockImplementation((id: string) => ({
+          select: () => ({ lean: async () => makeUser({ _id: new Types.ObjectId(id), callingCapableAt: new Date() }) }),
+        }));
+        const callee = oid().toString();
+        liveCalls = [{ participants: [oid(), new Types.ObjectId(callee)] }];
+        expect((await service.canCall(makeUser(), callee)).code).toBe(CallErrorCode.CalleeBusy);
+      });
+
+      it('an unexpected error still throws (no silent "allowed: false")', async () => {
+        callAuthorization.assertCanCall.mockRejectedValue(new Error('Mongo down'));
+
+        await expect(service.canCall(makeUser(), oid().toString())).rejects.toThrow('Mongo down');
+      });
+    });
+
+    describe('history management', () => {
+      let me: any;
+      let call: any;
+
+      beforeEach(() => {
+        me = makeUser();
+        call = { _id: oid(), initiator: me._id, participants: [me._id, oid()] };
+        callModel.findById = jest.fn(() => ({ lean: async () => call }));
+        callModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 4 });
+      });
+
+      it('6. hiding adds only the requester to hiddenFor', async () => {
+        await service.hideCall(me, String(call._id));
+
+        expect(callModel.updateOne).toHaveBeenCalledWith(
+          { _id: call._id },
+          { $addToSet: { hiddenFor: expect.any(Types.ObjectId) } },
+        );
+        expect(String(callModel.updateOne.mock.calls[0][1].$addToSet.hiddenFor)).toBe(me._id.toString());
+      });
+
+      it('a non-participant cannot hide a call', async () => {
+        await expect(service.hideCall(makeUser(), String(call._id))).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('clearing history marks every visible call of mine as hidden', async () => {
+        await expect(service.clearHistory(me)).resolves.toEqual({ hidden: 4 });
+
+        const [filter, update] = callModel.updateMany.mock.calls[0];
+        expect(String(filter.participants)).toBe(me._id.toString());
+        expect(String(filter.hiddenFor.$ne)).toBe(me._id.toString());
+        expect(String(update.$addToSet.hiddenFor)).toBe(me._id.toString());
+      });
+    });
+
+    describe('missed-call badge', () => {
+      it('7. counts missed calls to me, not by me, not hidden, since callsSeenAt', async () => {
+        const me = makeUser();
+        const seenAt = new Date(Date.now() - 3600_000);
+        userModel.findById.mockImplementation(() => ({
+          select: () => ({ lean: async () => ({ callsSeenAt: seenAt }) }),
+        }));
+        callModel.countDocuments = jest.fn(async () => 2);
+
+        await expect(service.getUnseenCount(me)).resolves.toEqual({ count: 2 });
+
+        const filter = callModel.countDocuments.mock.calls[0][0];
+        expect(filter.status).toBe(CallStatus.Missed);
+        expect(String(filter.initiator.$ne)).toBe(me._id.toString());
+        expect(String(filter.hiddenFor.$ne)).toBe(me._id.toString());
+        expect(filter.createdAt.$gt).toBe(seenAt);
+      });
+
+      it('marking seen stamps callsSeenAt', async () => {
+        const me = makeUser();
+
+        await service.markSeen(me);
+
+        expect(userModel.updateOne).toHaveBeenCalledWith(
+          { _id: me._id },
+          { $set: { callsSeenAt: expect.any(Date) } },
+        );
+      });
+    });
+
+    describe('call reports', () => {
+      it('8. the reported user is the other participant', async () => {
+        const me = makeUser();
+        const other = oid();
+        callModel.findById = jest.fn(() => ({ lean: async () => ({ _id: oid(), initiator: other, participants: [other, me._id] }) }));
+
+        const target = await service.resolveReportTarget(oid().toString(), me._id.toString());
+
+        expect(String(target)).toBe(String(other));
+      });
+
+      it('8b. a non-participant cannot report the call', async () => {
+        callModel.findById = jest.fn(() => ({ lean: async () => ({ _id: oid(), participants: [oid(), oid()] }) }));
+
+        await expect(
+          service.resolveReportTarget(oid().toString(), oid().toString()),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+    });
+
+    describe('post-call feedback', () => {
+      it('stores rating and de-duplicated issues under metadata.feedback.<userId>', async () => {
+        const me = makeUser();
+        callModel.findById = jest.fn(() => ({ lean: async () => ({ _id: oid(), participants: [me._id, oid()] }) }));
+
+        await service.recordStats(me, oid().toString(), { rating: 2, issues: ['audio', 'audio', 'echo'] as any });
+
+        const set = callModel.updateOne.mock.calls[0][1].$set;
+        expect(set[`metadata.feedback.${me._id}`]).toEqual({
+          rating: 2,
+          issues: ['audio', 'echo'],
+          ratedAt: expect.any(Date),
+        });
+      });
+    });
+
+    it('settings: default is mutual_follows, and updates are saved', async () => {
+      userModel.findById.mockImplementation(() => ({ select: () => ({ lean: async () => ({}) }) }));
+      await expect(service.getSettings(makeUser())).resolves.toEqual({ callPrivacy: 'mutual_follows' });
+
+      const me = makeUser();
+      await service.updateSettings(me, 'nobody' as any);
+      expect(userModel.updateOne).toHaveBeenCalledWith({ _id: me._id }, { $set: { callPrivacy: 'nobody' } });
+    });
+
+    it('history excludes calls I hid', async () => {
+      const me = makeUser();
+      let filter: any;
+      const chain: any = { sort: () => chain, skip: () => chain, limit: () => chain, populate: () => chain, lean: async () => [] };
+      callModel.find = jest.fn((f: any) => ((filter = f), chain));
+      callModel.countDocuments = jest.fn(async () => 0);
+
+      await service.getHistory(me, { page: 1, limit: 10 } as any);
+
+      expect(String(filter.hiddenFor.$ne)).toBe(me._id.toString());
     });
   });
 });

@@ -46,6 +46,12 @@ export class AdminCallController {
     return this.metrics.compute(query.hours);
   }
 
+  /** One call in full — for reviewing a call report (contentId is the call id). */
+  @Get('calls/:id')
+  get(@Param('id') id: string) {
+    return this.callService.adminGet(id);
+  }
+
   /** Force-end a live call; both clients drop within seconds. Idempotent. */
   @Post('calls/:id/terminate')
   @HttpCode(HttpStatus.OK)

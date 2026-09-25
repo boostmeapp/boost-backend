@@ -1,4 +1,15 @@
-import { IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
+import { CallIssue } from '../call.constants';
 
 /**
  * Client-reported quality at call end. Untrusted: every field is bounded, and
@@ -31,4 +42,18 @@ export class CallStatsDto {
   @Min(0)
   @Max(1_000)
   reconnectCount?: number;
+
+  /** Post-call rating from the user, 1–5. Optional and sampled by the app. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  rating?: number;
+
+  /** Quick issue chips; only meaningful with a rating. */
+  @ValidateIf((o) => o.issues !== undefined)
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsEnum(CallIssue, { each: true })
+  issues?: CallIssue[];
 }

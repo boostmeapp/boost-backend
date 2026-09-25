@@ -61,6 +61,19 @@ export class User extends Document {
   @Prop({ default: false })
   callingRestricted: boolean;
 
+  // Set when this user's app fetches a calling token — proof they run a build
+  // that can answer. Callers get "needs to update" instead of a silent ring.
+  @Prop()
+  callingCapableAt?: Date;
+
+  // Who may call this user: 'everyone' | 'mutual_follows' | 'nobody'.
+  @Prop({ type: String, enum: ['everyone', 'mutual_follows', 'nobody'], default: 'mutual_follows' })
+  callPrivacy: 'everyone' | 'mutual_follows' | 'nobody';
+
+  // Missed calls after this count toward the missed-call badge.
+  @Prop()
+  callsSeenAt?: Date;
+
   @Prop({ select: false })
   refreshToken?: string;
 

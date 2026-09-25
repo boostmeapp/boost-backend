@@ -157,4 +157,49 @@ describe('CallAuthorizationService.assertCanCall', () => {
 
     expect(err?.getResponse()).toMatchObject({ code: CallErrorCode.UserUnavailable });
   });
+
+  describe("callee's callPrivacy (Iteration 12)", () => {
+    it('nobody → 403 CALLS_NOT_ACCEPTED, even for a mutual follow', async () => {
+      Object.assign(users[1], { callPrivacy: 'nobody' });
+      followCount = 2;
+
+      const err = await denial();
+
+      expect(err?.getResponse()).toMatchObject({ code: 'CALLS_NOT_ACCEPTED' });
+    });
+
+    it('everyone → no relationship needed', async () => {
+      Object.assign(users[1], { callPrivacy: 'everyone' });
+
+      await expect(service.assertCanCall(callerId, calleeId)).resolves.toBeUndefined();
+      expect(followModel.countDocuments).not.toHaveBeenCalled();
+    });
+
+    it('mutual_follows (and unset) → the Iteration 4 behaviour', async () => {
+      Object.assign(users[1], { callPrivacy: 'mutual_follows' });
+      expect((await denial())?.reason).toBe(CallDenialReason.NotConnected);
+
+      delete (users[1] as any).callPrivacy;
+      expect((await denial())?.reason).toBe(CallDenialReason.NotConnected);
+
+      followCount = 2;
+      await expect(service.assertCanCall(callerId, calleeId)).resolves.toBeUndefined();
+    });
+
+    it('a block beats privacy: blocked + nobody still answers USER_UNAVAILABLE', async () => {
+      Object.assign(users[1], { callPrivacy: 'nobody' });
+      blocked = true;
+
+      const err = await denial();
+
+      expect(err?.getResponse()).toMatchObject({ code: CallErrorCode.UserUnavailable });
+    });
+
+    it('self, ban and callingRestricted still apply with everyone', async () => {
+      Object.assign(users[1], { callPrivacy: 'everyone' });
+      Object.assign(users[0], { callingRestricted: true });
+
+      expect((await denial())?.getResponse()).toMatchObject({ code: CallErrorCode.CallingRestricted });
+    });
+  });
 });

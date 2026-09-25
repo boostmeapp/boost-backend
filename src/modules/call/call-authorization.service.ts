@@ -7,6 +7,7 @@ import {
   CALL_POLICY,
   CallDenialReason,
   CallErrorCode,
+  CallPrivacy,
 } from './call.constants';
 
 /**
@@ -55,7 +56,7 @@ export class CallAuthorizationService {
     const ids = [callerId, calleeId].filter((id) => Types.ObjectId.isValid(id));
     const users = await this.userModel
       .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
-      .select('_id isActive isBanned callingRestricted')
+      .select('_id isActive isBanned callingRestricted callPrivacy')
       .lean();
     const caller = users.find((u) => String(u._id) === callerId);
     const callee = users.find((u) => String(u._id) === calleeId);
@@ -95,9 +96,24 @@ export class CallAuthorizationService {
       );
     }
 
-    // 5. Relationship requirement.
+    // 5. The callee's own "Who can call me". After the block check, so a
+    //    blocked caller always sees USER_UNAVAILABLE, never this.
+    const privacy = (callee!.callPrivacy as CallPrivacy) ?? CallPrivacy.MutualFollows;
+    if (privacy === CallPrivacy.Nobody) {
+      this.deny(
+        callerId,
+        calleeId,
+        CallErrorCode.CallsNotAccepted,
+        "This user isn't accepting calls",
+        CallDenialReason.CallsNotAccepted,
+      );
+    }
+
+    // 6. Relationship requirement — the app-wide policy, which a callee can
+    //    relax for themselves by choosing "everyone".
     if (
       CALL_POLICY.requireMutualFollow &&
+      privacy !== CallPrivacy.Everyone &&
       !(await this.isMutualFollow(callerId, calleeId))
     ) {
       this.deny(

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -30,6 +31,8 @@ import { InitiateCallDto } from './dto/initiate-call.dto';
 import { ENV } from '../../config';
 import {
   ApnsEnvironment,
+  CALLING_CAPABLE_REFRESH_SECONDS,
+  CallPrivacy,
   CALL_INIT_LOCK_TTL_SECONDS,
   CALL_QUEUE,
   CallJobs,
@@ -174,6 +177,10 @@ export class CallService {
       );
     }
 
+    // Only a calling-capable build ever calls this endpoint, which makes it
+    // the proof that this user can answer.
+    await this.markCallingCapable(user);
+
     const token = this.streamVideo.generateUserToken(
       userId,
       STREAM_TOKEN_VALIDITY_SECONDS,
@@ -216,7 +223,8 @@ export class CallService {
       await this.assertConversationBetween(conversationId, callerId, calleeId);
     }
 
-    // After authorization, so a blocked caller still sees only the generic answer.
+    // All after authorization, so a blocked caller still sees only the generic answer.
+    await this.assertCalleeCapable(calleeId);
     await this.callAbuse.assertWithinRateLimit(callerId);
     await this.callAbuse.assertNotBackedOff(callerId, calleeId);
 
@@ -318,6 +326,7 @@ export class CallService {
 
     const filter: Record<string, unknown> = {
       participants: new Types.ObjectId(userId),
+      hiddenFor: { $ne: new Types.ObjectId(userId) },
     };
     if (query.conversationId) filter.conversation = new Types.ObjectId(query.conversationId);
     if (query.status) filter.status = query.status;
@@ -600,10 +609,16 @@ export class CallService {
       if (stats[key] !== undefined) quality[key] = stats[key];
     }
 
-    await this.callModel.updateOne(
-      { _id: call._id },
-      { $set: { [`metadata.quality.${userId}`]: quality } },
-    );
+    const set: Record<string, unknown> = { [`metadata.quality.${userId}`]: quality };
+    if (stats.rating !== undefined) {
+      set[`metadata.feedback.${userId}`] = {
+        rating: stats.rating,
+        issues: [...new Set(stats.issues ?? [])],
+        ratedAt: new Date(),
+      };
+    }
+
+    await this.callModel.updateOne({ _id: call._id }, { $set: set });
     return { recorded: true };
   }
 
@@ -747,6 +762,155 @@ export class CallService {
       durationSeconds: call.durationSeconds ?? null,
       endedReason: call.endedReason ?? null,
     };
+  }
+
+  /**
+   * Stamp callingCapableAt, at most once per refresh window. Skips the write
+   * when the JWT's user doc is already fresh, and the conditional filter makes
+   * a concurrent refresh a no-op. Never fails token issuance.
+   */
+  private async markCallingCapable(user: User): Promise<void> {
+    const staleBefore = new Date(Date.now() - CALLING_CAPABLE_REFRESH_SECONDS * 1000);
+    if (user.callingCapableAt && new Date(user.callingCapableAt) > staleBefore) return;
+    try {
+      await this.userModel.updateOne(
+        {
+          _id: user._id,
+          $or: [{ callingCapableAt: { $exists: false } }, { callingCapableAt: { $lt: staleBefore } }],
+        },
+        { $set: { callingCapableAt: new Date() } },
+      );
+    } catch (err) {
+      this.logger.warn(`callingCapableAt not updated for ${user._id}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 409 CALLEE_UNSUPPORTED when the callee has never run a build that can
+   * answer. Without this, a call to someone on an old app version rings
+   * nowhere and silently becomes "missed", which reads as being ignored.
+   */
+  private async assertCalleeCapable(calleeId: string): Promise<void> {
+    const callee = await this.userModel.findById(calleeId).select('callingCapableAt').lean();
+    if (!callee?.callingCapableAt) {
+      throw new ConflictException({
+        message: 'This user needs to update Boostra to receive calls',
+        code: CallErrorCode.CalleeUnsupported,
+      });
+    }
+  }
+
+  /**
+   * Pre-flight: would a call to this user go through right now? Runs the same
+   * checks as initiate() without creating anything, so the app can disable or
+   * hide the call button with the right reason. Advisory only — initiate()
+   * re-checks everything. Blocked and unavailable stay indistinguishable.
+   */
+  async canCall(user: User, calleeId: string): Promise<{ allowed: boolean; code?: string }> {
+    this.streamVideo.getClient(); // 503 when calling is disabled
+    const callerId = user._id.toString();
+    try {
+      await this.callAuthorization.assertCanCall(callerId, calleeId);
+      await this.assertCalleeCapable(calleeId);
+      await this.callAbuse.assertNotBackedOff(callerId, calleeId);
+      await this.assertNotBusy(callerId, calleeId);
+      return { allowed: true };
+    } catch (err) {
+      const code =
+        err instanceof HttpException ? (err.getResponse() as { code?: string })?.code : undefined;
+      if (!code) throw err;
+      return { allowed: false, code };
+    }
+  }
+
+  async getSettings(user: User): Promise<{ callPrivacy: CallPrivacy }> {
+    const doc = await this.userModel.findById(user._id).select('callPrivacy').lean();
+    return { callPrivacy: (doc?.callPrivacy as CallPrivacy) ?? CallPrivacy.MutualFollows };
+  }
+
+  async updateSettings(user: User, callPrivacy: CallPrivacy): Promise<{ callPrivacy: CallPrivacy }> {
+    // Applies to new calls only; a live call is never cut off by this.
+    await this.userModel.updateOne({ _id: user._id }, { $set: { callPrivacy } });
+    return { callPrivacy };
+  }
+
+  /** Remove one call from the requester's own history. Idempotent. */
+  async hideCall(user: User, callId: string): Promise<{ hidden: true }> {
+    const userId = user._id.toString();
+    const call = await this.findCallOrThrow(callId);
+    if (!call.participants.some((p) => String(p) === userId)) {
+      throw new ForbiddenException({
+        message: 'You are not part of this call',
+        code: CallErrorCode.NotParticipant,
+      });
+    }
+    await this.callModel.updateOne(
+      { _id: call._id },
+      { $addToSet: { hiddenFor: new Types.ObjectId(userId) } },
+    );
+    return { hidden: true };
+  }
+
+  /** "Clear call history" — for the requester only. */
+  async clearHistory(user: User): Promise<{ hidden: number }> {
+    const me = new Types.ObjectId(user._id.toString());
+    const res = await this.callModel.updateMany(
+      { participants: me, hiddenFor: { $ne: me } },
+      { $addToSet: { hiddenFor: me } },
+    );
+    return { hidden: res.modifiedCount };
+  }
+
+  /** Missed calls to the requester since they last opened call history. */
+  async getUnseenCount(user: User): Promise<{ count: number }> {
+    const me = new Types.ObjectId(user._id.toString());
+    const doc = await this.userModel.findById(me).select('callsSeenAt').lean();
+    const count = await this.callModel.countDocuments({
+      participants: me,
+      initiator: { $ne: me },
+      status: CallStatus.Missed,
+      hiddenFor: { $ne: me },
+      ...(doc?.callsSeenAt && { createdAt: { $gt: doc.callsSeenAt } }),
+    });
+    return { count };
+  }
+
+  async markSeen(user: User): Promise<{ seenAt: Date }> {
+    const seenAt = new Date();
+    await this.userModel.updateOne({ _id: user._id }, { $set: { callsSeenAt: seenAt } });
+    return { seenAt };
+  }
+
+  /**
+   * For a call report: the reporter must have been in the call, and the
+   * reported user is the other participant.
+   */
+  async resolveReportTarget(callId: string, reporterId: string): Promise<Types.ObjectId> {
+    const call = await this.findCallOrThrow(callId);
+    const ids = call.participants.map(String);
+    if (!ids.includes(reporterId)) {
+      throw new ForbiddenException({
+        message: 'You can only report calls you were part of',
+        code: CallErrorCode.NotParticipant,
+      });
+    }
+    const other = ids.find((id) => id !== reporterId);
+    return new Types.ObjectId(other ?? String(call.initiator));
+  }
+
+  /** Admin: one call in full — participants, timing, quality and feedback. */
+  async adminGet(callId: string) {
+    const call = Types.ObjectId.isValid(callId)
+      ? await this.callModel
+          .findById(callId)
+          .populate('participants', '_id username firstName lastName profileImage')
+          .populate('initiator', '_id username')
+          .lean()
+      : null;
+    if (!call) {
+      throw new NotFoundException({ message: 'Call not found', code: CallErrorCode.CallNotFound });
+    }
+    return call;
   }
 
   /** A call can only be attached to a thread both parties are in. */

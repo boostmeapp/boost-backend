@@ -33,6 +33,11 @@ export interface CallMetrics {
   ringToAnswerSeconds: { p50: number | null; p95: number | null; samples: number };
   /** Stuck calls the sweeper had to close. Should hover near zero. */
   sweeperCaught: number;
+  /**
+   * Post-call ratings: how many were given, and the share at 1–2 stars.
+   * Catches quality regressions that packet stats miss.
+   */
+  ratings: { count: number; lowShare: number | null };
 }
 
 /** Nearest-rank percentile of an ascending array. */
@@ -65,7 +70,7 @@ export class CallMetricsService {
     const from = new Date(to.getTime() - hours * 3600 * 1000);
     const range = { createdAt: { $gte: from, $lte: to } };
 
-    const [byStatus, answeredRows, sweeperCaught] = await Promise.all([
+    const [byStatus, answeredRows, sweeperCaught, ratingRows] = await Promise.all([
       this.callModel.aggregate<{ _id: CallStatus; count: number; answered: number }>([
         { $match: range },
         {
@@ -82,6 +87,19 @@ export class CallMetricsService {
         .limit(LATENCY_SAMPLE_CAP)
         .lean(),
       this.sweeperCaughtSince(from, to),
+      // metadata.feedback is keyed by rater id; flatten to one row per rating.
+      this.callModel.aggregate<{ count: number; low: number }>([
+        { $match: { ...range, 'metadata.feedback': { $exists: true } } },
+        { $project: { ratings: { $objectToArray: '$metadata.feedback' } } },
+        { $unwind: '$ratings' },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            low: { $sum: { $cond: [{ $lte: ['$ratings.v.rating', 2] }, 1, 0] } },
+          },
+        },
+      ]),
     ]);
 
     const count = (s: CallStatus) => byStatus.find((r) => r._id === s)?.count ?? 0;
@@ -112,6 +130,12 @@ export class CallMetricsService {
         samples: latencies.length,
       },
       sweeperCaught,
+      ratings: {
+        count: ratingRows[0]?.count ?? 0,
+        lowShare: ratingRows[0]?.count
+          ? Math.round((ratingRows[0].low / ratingRows[0].count) * 1000) / 1000
+          : null,
+      },
     };
   }
 

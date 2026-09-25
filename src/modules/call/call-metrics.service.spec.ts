@@ -14,6 +14,7 @@ describe('percentile', () => {
 
 describe('CallMetricsService', () => {
   let groups: { _id: CallStatus; count: number; answered: number }[];
+  let ratingAgg: { count: number; low: number }[];
   let answeredRows: { ringStartedAt: Date; answeredAt: Date }[];
   let redis: any;
   let service: CallMetricsService;
@@ -30,9 +31,13 @@ describe('CallMetricsService', () => {
 
   beforeEach(() => {
     groups = [];
+    ratingAgg = [];
     answeredRows = [];
     const callModel = {
-      aggregate: jest.fn(async () => groups),
+      // The ratings pipeline is the one that unwinds metadata.feedback.
+      aggregate: jest.fn(async (pipeline: any[]) =>
+        pipeline.some((st) => st.$unwind) ? ratingAgg : groups,
+      ),
       find: jest.fn((f: any) => {
         findFilter = f;
         const chain: any = { select: () => chain, limit: () => chain, lean: async () => answeredRows };
@@ -77,6 +82,16 @@ describe('CallMetricsService', () => {
     });
     expect(m.ringToAnswerSeconds).toEqual({ p50: 5, p95: 30, samples: 8 });
     expect(findFilter.createdAt.$gte).toEqual(m.window.from);
+  });
+
+  it('reports rating count and the share at 1–2 stars', async () => {
+    ratingAgg = [{ count: 8, low: 2 }];
+
+    expect((await service.compute(24)).ratings).toEqual({ count: 8, lowShare: 0.25 });
+  });
+
+  it('ratings are empty, not NaN, when nobody rated', async () => {
+    expect((await service.compute(24)).ratings).toEqual({ count: 0, lowShare: null });
   });
 
   it('answer rate is null with nothing answerable', async () => {

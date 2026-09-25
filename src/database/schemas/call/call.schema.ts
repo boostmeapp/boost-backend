@@ -67,7 +67,14 @@ export class Call extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
   rejectedBy: Types.ObjectId[];
 
-  /** Reserved for client-reported quality stats (Iteration 11). */
+  /**
+   * Users who removed this call from their own history. Never a delete: the
+   * other participant's history and all analytics are untouched.
+   */
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
+  hiddenFor: Types.ObjectId[];
+
+  /** Client-reported quality stats (Iteration 11) and post-call feedback (Iteration 12). */
   @Prop({ type: MongooseSchema.Types.Mixed })
   metadata?: Record<string, any>;
 

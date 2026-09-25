@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Patch,
   HttpCode,
   HttpStatus,
   Param,
@@ -11,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { CallHistoryQueryDto } from './dto/call-history-query.dto';
 import { CallStatsDto } from './dto/call-stats.dto';
+import { UpdateCallSettingsDto } from './dto/update-call-settings.dto';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
@@ -36,6 +39,49 @@ export class CallController {
   @Get()
   history(@CurrentUser() user: User, @Query() query: CallHistoryQueryDto) {
     return this.callService.getHistory(user, query);
+  }
+
+  /** "Clear call history" — the requester's list only. */
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  clearHistory(@CurrentUser() user: User) {
+    return this.callService.clearHistory(user);
+  }
+
+  @Get('settings')
+  getSettings(@CurrentUser() user: User) {
+    return this.callService.getSettings(user);
+  }
+
+  @Patch('settings')
+  updateSettings(@CurrentUser() user: User, @Body() dto: UpdateCallSettingsDto) {
+    return this.callService.updateSettings(user, dto.callPrivacy);
+  }
+
+  /** Missed-call badge. */
+  @Get('unseen-count')
+  unseenCount(@CurrentUser() user: User) {
+    return this.callService.getUnseenCount(user);
+  }
+
+  @Post('seen')
+  @HttpCode(HttpStatus.OK)
+  markSeen(@CurrentUser() user: User) {
+    return this.callService.markSeen(user);
+  }
+
+  /** Pre-flight for the call button. Called on chat/profile focus, so capped. */
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get('can-call/:userId')
+  canCall(@CurrentUser() user: User, @Param('userId') userId: string) {
+    return this.callService.canCall(user, userId);
+  }
+
+  /** Remove one call from the requester's own history. */
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  hide(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.callService.hideCall(user, id);
   }
 
   // A coarse burst cap; the real per-caller limit is Iteration 11.
