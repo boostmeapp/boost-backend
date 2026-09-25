@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CallHistoryQueryDto } from './dto/call-history-query.dto';
+import { CallStatsDto } from './dto/call-stats.dto';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
@@ -70,5 +71,12 @@ export class CallController {
   @HttpCode(HttpStatus.OK)
   end(@CurrentUser() user: User, @Param('id') id: string) {
     return this.callService.performAction(user, id, 'end');
+  }
+
+  /** Client-reported call quality at end. Participants only; bounded input. */
+  @Post(':id/stats')
+  @HttpCode(HttpStatus.OK)
+  stats(@CurrentUser() user: User, @Param('id') id: string, @Body() dto: CallStatsDto) {
+    return this.callService.recordStats(user, id, dto);
   }
 }

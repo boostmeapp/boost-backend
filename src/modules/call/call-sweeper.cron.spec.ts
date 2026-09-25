@@ -10,6 +10,7 @@ describe('CallSweeperCron', () => {
   let callService: { expireRingingCall: jest.Mock; applyTransition: jest.Mock };
   let streamVideo: { endCall: jest.Mock };
   let redis: { setIfAbsent: jest.Mock; deleteIfEquals: jest.Mock };
+  let metrics: { recordSweeperCatches: jest.Mock };
   let cron: CallSweeperCron;
   let queries: any[];
 
@@ -37,11 +38,13 @@ describe('CallSweeperCron', () => {
       setIfAbsent: jest.fn().mockResolvedValue(true),
       deleteIfEquals: jest.fn().mockResolvedValue(true),
     };
+    metrics = { recordSweeperCatches: jest.fn().mockResolvedValue(undefined) };
     cron = new CallSweeperCron(
       callModel as any,
       callService as any,
       streamVideo as any,
       redis as any,
+      metrics as any,
     );
     jest.spyOn((cron as any).logger, 'warn').mockImplementation(() => undefined);
   });
@@ -63,6 +66,7 @@ describe('CallSweeperCron', () => {
 
     expect(res).toEqual({ missed: 2, ended: 0, ran: true });
     expect(callService.expireRingingCall).toHaveBeenCalledTimes(2);
+    expect(metrics.recordSweeperCatches).toHaveBeenCalledWith(2);
   });
 
   it('a ringing call answered meanwhile is not counted', async () => {

@@ -156,6 +156,21 @@ export class ENV {
     return Number.isFinite(n) && n > 0 ? n : 45;
   }
 
+  /** Per-caller cap on call initiations in any rolling hour. */
+  static get CALL_MAX_PER_HOUR(): number {
+    const n = Number(configService.get<string>('CALL_MAX_PER_HOUR', '30'));
+    return Number.isFinite(n) && n > 0 ? n : 30;
+  }
+
+  /**
+   * Hourly answer rate below this logs an ALERT. A dead VoIP credential looks
+   * exactly like a falling answer rate and is otherwise invisible.
+   */
+  static get CALL_ANSWER_RATE_ALERT_FLOOR(): number {
+    const n = Number(configService.get<string>('CALL_ANSWER_RATE_ALERT_FLOOR', '0.4'));
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.4;
+  }
+
   static get STREAM_FIREBASE_PROVIDER(): string {
     return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
   }

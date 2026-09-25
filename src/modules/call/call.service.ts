@@ -21,6 +21,9 @@ import { RedisService } from '../redis/redis.service';
 import { StreamUserProfile, StreamVideoService } from './stream-video.service';
 import { CallAuthorizationService } from './call-authorization.service';
 import { CallEventsService } from './call-events.service';
+import { CallAbuseService } from './call-abuse.service';
+import { CallStatsDto } from './dto/call-stats.dto';
+import { AdminCallQueryDto } from './dto/admin-call-query.dto';
 import { CallHistoryQueryDto } from './dto/call-history-query.dto';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { InitiateCallDto } from './dto/initiate-call.dto';
@@ -136,6 +139,7 @@ export class CallService {
     private readonly redis: RedisService,
     @InjectQueue(CALL_QUEUE) private readonly callQueue: Queue<RingTimeoutJob>,
     private readonly callEvents: CallEventsService,
+    private readonly callAbuse: CallAbuseService,
   ) {}
 
   /**
@@ -212,7 +216,9 @@ export class CallService {
       await this.assertConversationBetween(conversationId, callerId, calleeId);
     }
 
-    // TODO(Iteration 11): per-caller rate limit and reject-backoff go here.
+    // After authorization, so a blocked caller still sees only the generic answer.
+    await this.callAbuse.assertWithinRateLimit(callerId);
+    await this.callAbuse.assertNotBackedOff(callerId, calleeId);
 
     const callee = await this.userModel
       .findById(calleeId)
@@ -281,6 +287,7 @@ export class CallService {
     }
 
     await this.scheduleRingTimeout(call._id.toString());
+    await this.callAbuse.recordInitiation(callerId);
 
     this.logger.log(
       `Call ${call._id} ringing: ${callerId} -> ${calleeId} (${callType}, ${streamCallId})`,
@@ -470,11 +477,13 @@ export class CallService {
         .lean<Call>();
 
       if (updated) {
+        // One line per transition, fixed key=value shape, so a call's whole
+        // life can be grepped by callId and parsed by a log pipeline.
         this.logger.log(
-          `Call ${updated._id} ${current.status} -> ${next}` +
+          `call.transition callId=${updated._id} from=${current.status} to=${next}` +
             ` actor=${opts.actorId ?? 'system'}` +
-            (set.endedReason ? ` reason=${set.endedReason}` : '') +
-            (isTerminalStatus(next) ? ` duration=${set.durationSeconds}s` : ''),
+            ` reason=${set.endedReason ?? '-'}` +
+            ` durationMs=${isTerminalStatus(next) ? Number(set.durationSeconds) * 1000 : '-'}`,
         );
         // Left ringing by any route (app, webhook, block): the timeout is moot.
         if (current.status === CallStatus.Ringing && !opts.fromRingTimeout) {
@@ -523,24 +532,121 @@ export class CallService {
 
     let terminated = 0;
     for (const call of live) {
-      const next = call.status === CallStatus.Active ? CallStatus.Ended : CallStatus.Cancelled;
-      try {
-        const { changed } = await this.applyTransition(call._id, next, {
-          actorId: opts.actorId,
-          reason,
-        });
-        if (changed) terminated++;
-      } catch (err) {
-        // Already ended by someone else — fine; still make sure Stream drops it.
-        this.logger.warn(`terminateBetween: ${call._id} not transitioned: ${(err as Error).message}`);
-      }
-      try {
-        await this.streamVideo.endCall(call.streamCallId);
-      } catch (err) {
-        this.logger.error(`terminateBetween: Stream end failed for ${call._id}: ${(err as Error).message}`);
+      if ((await this.terminateCall(call, { actorId: opts.actorId, reason })).changed) {
+        terminated++;
       }
     }
     return terminated;
+  }
+
+  /**
+   * Force-end one call: ringing → cancelled, active → ended, both with the
+   * given reason; then Stream drops everyone. Already-terminal calls are an
+   * idempotent no-op (Stream is still told to end, in case it wasn't).
+   * Never throws on a Stream failure.
+   */
+  async terminateCall(
+    call: Pick<Call, '_id' | 'status' | 'streamCallId'>,
+    opts: { actorId?: string | null; reason: CallEndReason },
+  ): Promise<TransitionResult> {
+    let result: TransitionResult | null = null;
+
+    if (!isTerminalStatus(call.status)) {
+      const next = call.status === CallStatus.Active ? CallStatus.Ended : CallStatus.Cancelled;
+      try {
+        result = await this.applyTransition(call._id, next, opts);
+      } catch (err) {
+        // Moved on concurrently — fine; still make sure Stream drops it.
+        this.logger.warn(`terminateCall: ${call._id} not transitioned: ${(err as Error).message}`);
+      }
+    }
+
+    try {
+      await this.streamVideo.endCall(call.streamCallId);
+    } catch (err) {
+      this.logger.error(`terminateCall: Stream end failed for ${call._id}: ${(err as Error).message}`);
+    }
+
+    return result ?? { call: (await this.callModel.findById(call._id).lean<Call>())!, changed: false };
+  }
+
+  /** Admin: force-end a call by id. */
+  async adminTerminate(callId: string, adminId: string): Promise<CallSummary> {
+    const call = await this.findCallOrThrow(callId);
+    const { call: updated } = await this.terminateCall(call, {
+      actorId: adminId,
+      reason: CallEndReason.AdminTerminated,
+    });
+    return this.toSummary(updated);
+  }
+
+  /**
+   * Client-reported quality stats at call end, stored per reporter under
+   * metadata.quality.<userId>. Untrusted input: the DTO bounds every field,
+   * and only participants may report.
+   */
+  async recordStats(user: User, callId: string, stats: CallStatsDto): Promise<{ recorded: true }> {
+    const userId = user._id.toString();
+    const call = await this.findCallOrThrow(callId);
+    if (!call.participants.some((p) => String(p) === userId)) {
+      throw new ForbiddenException({
+        message: 'You are not part of this call',
+        code: CallErrorCode.NotParticipant,
+      });
+    }
+
+    const quality: Record<string, unknown> = { reportedAt: new Date() };
+    for (const key of ['mos', 'packetLoss', 'jitter', 'reconnectCount'] as const) {
+      if (stats[key] !== undefined) quality[key] = stats[key];
+    }
+
+    await this.callModel.updateOne(
+      { _id: call._id },
+      { $set: { [`metadata.quality.${userId}`]: quality } },
+    );
+    return { recorded: true };
+  }
+
+  /** Admin: restrict or unrestrict a user's calling (checked by CallAuthorizationService). */
+  async setCallingRestricted(userId: string, restricted: boolean) {
+    const user = Types.ObjectId.isValid(userId)
+      ? await this.userModel
+          .findByIdAndUpdate(userId, { callingRestricted: restricted }, { new: true })
+          .select('_id callingRestricted')
+          .lean()
+      : null;
+    if (!user) throw new NotFoundException('User not found');
+    this.logger.log(`Calling ${restricted ? 'restricted' : 'unrestricted'} for user ${userId}`);
+    return { userId: String(user._id), callingRestricted: user.callingRestricted };
+  }
+
+  /** Admin list: filter by user, status, and createdAt range, newest first. */
+  async adminList(query: AdminCallQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const filter: Record<string, any> = {};
+    if (query.userId) filter.participants = new Types.ObjectId(query.userId);
+    if (query.status) filter.status = query.status;
+    if (query.from || query.to) {
+      filter.createdAt = {
+        ...(query.from && { $gte: new Date(query.from) }),
+        ...(query.to && { $lte: new Date(query.to) }),
+      };
+    }
+
+    const [data, total] = await Promise.all([
+      this.callModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('participants', '_id username firstName lastName profileImage')
+        .populate('initiator', '_id username')
+        .lean(),
+      this.callModel.countDocuments(filter),
+    ]);
+
+    return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
   /**

@@ -127,6 +127,45 @@ export class RedisService implements OnModuleDestroy {
     return res === 1;
   }
 
+  /** INCRBY with a TTL (refreshed each time) — for hourly metric buckets. */
+  async incrByWithTtl(key: string, by: number, ttlSeconds: number): Promise<number> {
+    const envKey = this.getEnvKey(key);
+    const res = await this.client.multi().incrby(envKey, by).expire(envKey, ttlSeconds).exec();
+    return Number(res?.[0]?.[1] ?? 0);
+  }
+
+  /** GET several keys at once; missing keys come back as null. */
+  async getValues(keys: string[]): Promise<(string | null)[]> {
+    if (!keys.length) return [];
+    return this.client.mget(keys.map((k) => this.getEnvKey(k)));
+  }
+
+  /**
+   * Events in the last `windowSeconds` on a sliding window (a sorted set of
+   * timestamps). Prunes expired entries as it reads.
+   */
+  async slidingWindowCount(key: string, windowSeconds: number): Promise<number> {
+    const envKey = this.getEnvKey(key);
+    const now = Date.now();
+    const res = await this.client
+      .multi()
+      .zremrangebyscore(envKey, 0, now - windowSeconds * 1000)
+      .zcard(envKey)
+      .exec();
+    return Number(res?.[1]?.[1] ?? 0);
+  }
+
+  /** Record one event on a sliding window; the key expires once the window passes. */
+  async slidingWindowAdd(key: string, windowSeconds: number): Promise<void> {
+    const envKey = this.getEnvKey(key);
+    const now = Date.now();
+    await this.client
+      .multi()
+      .zadd(envKey, now, `${now}-${Math.random().toString(36).slice(2, 10)}`)
+      .expire(envKey, windowSeconds)
+      .exec();
+  }
+
   async existsKey(key: string): Promise<boolean> {
     return (await this.client.exists(this.getEnvKey(key))) === 1;
   }

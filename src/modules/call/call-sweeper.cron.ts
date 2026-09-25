@@ -8,6 +8,7 @@ import { ENV } from '../../config';
 import { RedisService } from '../redis/redis.service';
 import { StreamVideoService } from './stream-video.service';
 import { CallService } from './call.service';
+import { CallMetricsService } from './call-metrics.service';
 import {
   CallEndReason,
   CallStatus,
@@ -40,6 +41,7 @@ export class CallSweeperCron {
     private readonly callService: CallService,
     private readonly streamVideo: StreamVideoService,
     private readonly redis: RedisService,
+    private readonly metrics: CallMetricsService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -66,6 +68,7 @@ export class CallSweeperCron {
       const missed = await this.sweepRinging();
       const ended = await this.sweepActive();
       if (missed || ended) {
+        await this.metrics.recordSweeperCatches(missed + ended);
         this.logger.warn(
           `Call sweep caught ${missed} stuck ringing and ${ended} orphaned active call(s) — check the ring-timeout queue and webhook delivery`,
         );

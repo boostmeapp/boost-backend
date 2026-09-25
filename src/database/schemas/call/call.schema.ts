@@ -83,5 +83,7 @@ CallSchema.plugin(mongoosePaginate as any);
 CallSchema.index({ participants: 1, createdAt: -1 });
 // Ring-timeout sweeper: stuck ringing/active calls by age.
 CallSchema.index({ status: 1, ringStartedAt: 1 });
+// Metrics and the admin list aggregate over a time range.
+CallSchema.index({ createdAt: -1 });
 // Webhook reconciliation, and rejects duplicate creation.
 CallSchema.index({ streamCallId: 1 }, { unique: true });

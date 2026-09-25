@@ -10,6 +10,9 @@ import { CallWebhookController } from './call-webhook.controller';
 import { CallWebhookService } from './call-webhook.service';
 import { CallSweeperCron } from './call-sweeper.cron';
 import { CallEventsService } from './call-events.service';
+import { CallAbuseService } from './call-abuse.service';
+import { CallMetricsService } from './call-metrics.service';
+import { AdminCallController } from './admin-call.controller';
 import { CallTimeoutProcessor } from './processors/call-timeout.processor';
 import { CALL_QUEUE } from './call.constants';
 import { ChatModule } from '../chat/chat.module';
@@ -38,13 +41,15 @@ import {
     // ChatService.isBlockedBetween is the single source of truth for blocks.
     ChatModule,
   ],
-  controllers: [CallController, CallWebhookController],
+  controllers: [CallController, CallWebhookController, AdminCallController],
   providers: [
     StreamVideoService,
     CallService,
     CallAuthorizationService,
     CallWebhookService,
     CallEventsService,
+    CallAbuseService,
+    CallMetricsService,
     CallTimeoutProcessor,
     CallSweeperCron,
   ],

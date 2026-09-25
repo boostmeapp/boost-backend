@@ -61,12 +61,18 @@ describe('CallService', () => {
   let conversationModel: any;
   let redis: FakeRedis;
   let queue: any;
+  let callAbuse: any;
   let liveCalls: { participants: Types.ObjectId[] }[];
   let service: CallService;
 
   beforeEach(() => {
     liveCalls = [];
     queue = { add: jest.fn().mockResolvedValue({}), getJob: jest.fn().mockResolvedValue(null) };
+    callAbuse = {
+      assertWithinRateLimit: jest.fn().mockResolvedValue(undefined),
+      assertNotBackedOff: jest.fn().mockResolvedValue(undefined),
+      recordInitiation: jest.fn().mockResolvedValue(undefined),
+    };
     streamVideo = {
       getClient: jest.fn(),
       getApiKey: jest.fn().mockReturnValue('public-key'),
@@ -101,6 +107,7 @@ describe('CallService', () => {
       redis as any,
       queue,
       { onCallTerminated: jest.fn() } as any,
+      callAbuse,
     );
   });
 
@@ -482,6 +489,89 @@ describe('CallService', () => {
 
       expect(String(lastFilter.conversation)).toBe(conversationId);
       expect(lastFilter.status).toBe(CallStatus.Active);
+    });
+  });
+
+  describe('abuse controls in initiate (Iteration 11)', () => {
+    const calleeId = () => oid().toString();
+
+    it('checks the rate limit and the backoff after authorization, before anything is created', async () => {
+      const order: string[] = [];
+      callAuthorization.assertCanCall.mockImplementation(async () => order.push('authz'));
+      callAbuse.assertWithinRateLimit.mockImplementation(async () => order.push('rate'));
+      callAbuse.assertNotBackedOff.mockImplementation(async () => order.push('backoff'));
+      callModel.create.mockImplementation(async (doc: any) => {
+        order.push('create');
+        return { ...doc, _id: oid(), createdAt: new Date() };
+      });
+
+      await service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio });
+
+      expect(order).toEqual(['authz', 'rate', 'backoff', 'create']);
+    });
+
+    it('a rate-limited caller creates nothing', async () => {
+      const { HttpException } = await import('@nestjs/common');
+      callAbuse.assertWithinRateLimit.mockRejectedValue(new HttpException({ code: 'CALL_RATE_LIMITED' }, 429));
+
+      const err = await service
+        .initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio })
+        .catch((e) => e);
+
+      expect(err.getStatus()).toBe(429);
+      expect(callModel.create).not.toHaveBeenCalled();
+    });
+
+    it('counts only calls that actually started ringing', async () => {
+      const caller = makeUser();
+      await service.initiate(caller, { calleeId: calleeId(), callType: CallType.Audio });
+      expect(callAbuse.recordInitiation).toHaveBeenCalledWith(caller._id.toString());
+
+      callAbuse.recordInitiation.mockClear();
+      streamVideo.createRingingCall.mockRejectedValue(new Error('boom'));
+      await service
+        .initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio })
+        .catch(() => undefined);
+      expect(callAbuse.recordInitiation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recordStats (Iteration 11)', () => {
+    let me: any;
+    let call: any;
+
+    beforeEach(() => {
+      me = makeUser();
+      call = { _id: oid(), participants: [me._id, oid()] };
+      callModel.findById = jest.fn(() => ({ lean: async () => call }));
+    });
+
+    it('stores the reporter\'s stats under metadata.quality.<userId>', async () => {
+      await service.recordStats(me, String(call._id), { mos: 4.2, packetLoss: 1.5, jitter: 30, reconnectCount: 1 });
+
+      const [filter, update] = callModel.updateOne.mock.calls[0];
+      expect(filter).toEqual({ _id: call._id });
+      expect(update.$set[`metadata.quality.${me._id}`]).toMatchObject({
+        mos: 4.2,
+        packetLoss: 1.5,
+        jitter: 30,
+        reconnectCount: 1,
+        reportedAt: expect.any(Date),
+      });
+    });
+
+    it('only stores fields that were sent', async () => {
+      await service.recordStats(me, String(call._id), { mos: 3 });
+
+      const stored = callModel.updateOne.mock.calls[0][1].$set[`metadata.quality.${me._id}`];
+      expect(Object.keys(stored).sort()).toEqual(['mos', 'reportedAt']);
+    });
+
+    it('a non-participant gets 403', async () => {
+      const err = await service.recordStats(makeUser(), String(call._id), { mos: 3 }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(callModel.updateOne).not.toHaveBeenCalled();
     });
   });
 });
