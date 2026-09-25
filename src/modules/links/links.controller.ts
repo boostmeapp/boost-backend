@@ -15,7 +15,7 @@ import { ENV } from '../../config';
  *
  *   /.well-known/apple-app-site-association   iOS universal links
  *   /.well-known/assetlinks.json              Android app links
- *   /video/:id                                the page a link lands on
+ *   /videos/:id                               the page a link lands on
  *
  * All three sit OUTSIDE the /api prefix (see main.ts `exclude`), because Apple
  * and Google only fetch them from the domain root.
@@ -41,8 +41,8 @@ export class LinksController {
           {
             appIDs: [appId],
             appID: appId,
-            components: [{ '/': '/video/*', comment: 'Shared videos' }],
-            paths: ['/video/*'],
+            components: [{ '/': '/videos/*', comment: 'Shared videos' }],
+            paths: ['/videos/*'],
           },
         ],
       },
@@ -72,7 +72,7 @@ export class LinksController {
    * this page is ever fetched; otherwise it shows the video's details, tries
    * the app's scheme once, and offers the stores.
    */
-  @Get('video/:id')
+  @Get('videos/:id')
   @Public()
   async videoPage(@Param('id') id: string, @Res() res: Response) {
     const video = Types.ObjectId.isValid(id)

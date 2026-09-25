@@ -83,7 +83,7 @@ async function bootstrap() {
       'reset-password',
       '.well-known/apple-app-site-association',
       '.well-known/assetlinks.json',
-      'video/:id',
+      'videos/:id',
     ],
   });
 
