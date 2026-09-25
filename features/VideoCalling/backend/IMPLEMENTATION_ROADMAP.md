@@ -316,6 +316,7 @@ Internal only. Consumed by Iteration 5.
 - **Callee deleted between check and ring** → tolerable race; the ring simply goes nowhere and times out via Iteration 9.
 - **Information leakage** → never reveal *why* in a way that discloses block state. `BLOCKED` and `USER_UNAVAILABLE` should present identically to the client.
 - **Policy too strict at launch** → keep the flag; you will want to relax it.
+- **Per-user control** → this policy is the app-wide default. Iteration 12 layers a per-user `callPrivacy` setting on top of it; keep the check order here (self → exists → block → relationship → restricted) so that layer slots in after the block check.
 
 ### Testing procedure
 Unit tests with mocked models, one per branch:
@@ -746,6 +747,7 @@ Surface calls in the product: a history list, call events inside the chat thread
    - Populates the *other* participant's `id`, `name`, `image` only. Never return the full user document.
    - Adds a computed `direction: 'incoming' | 'outgoing'` per row, relative to the requester — the client should not have to derive this.
    - Uses the `{ participants: 1, createdAt: -1 }` index from Iteration 2. Verify with `.explain()`.
+   - Accepts an optional `status` filter (`GET /calls?status=active`), which frontend Iteration 12's crash-rejoin check relies on.
 2. **Chat thread integration** — a call in a conversation should appear in the message list:
    - Add a `callEvent` message type to the message schema (`type: 'call'`, plus `callId`, `callStatus`, `durationSeconds` in metadata). Extend the existing enum; do not create a parallel collection.
    - On any terminal transition where `conversationId` is set, write this system message via `ChatService` and emit it over the **existing** `chat.gateway.ts` `user_${id}` rooms, so open threads update live with no new socket work.
@@ -879,13 +881,111 @@ Calling is rate limited, moderatable, and instrumented well enough to diagnose p
 
 ---
 
-# Iteration 12 — Production hardening and launch readiness
+# Iteration 12 — Callee capability, call privacy, and user-owned call data
+
+### Goal
+Close the gaps between "calls work" and "a complete calling product" that the mockups do not show but users will hit on day one: do not ring people whose app cannot answer, let users decide who can call them, let them manage their own history and missed-call badge, and let them report a call.
+
+### Prerequisites
+- Iterations 1–11.
+- Familiarity with `moderation.controller.ts` (`POST /moderation/reports`, `POST /moderation/block/:userId`) and `report.schema.ts`.
+
+### Implementation steps
+1. **Calling capability — do not ring old app builds.** Boostra is live, so when calling launches most users will be on a build with no Stream client. A call to them rings nowhere and silently becomes `missed`, which the caller reads as being ignored.
+   - Add `callingCapableAt?: Date` to `user.schema.ts`.
+   - Set it in `POST /calls/token` (only a calling-capable build ever calls that endpoint). Write at most once per 24h per user — compare before updating, so token refreshes do not become a write per request.
+   - In `CallService.initiate()`, **after** `assertCanCall()` and **before** the busy check: callee without `callingCapableAt` → `409 CALLEE_UNSUPPORTED`. No record, no Stream call. Running it after authorization means a blocked caller still gets the generic response and learns nothing.
+2. **"Who can call me" — a per-user setting.** Iteration 4's `CALL_POLICY` is an app-wide rule; users need their own control.
+   - Add `callPrivacy: 'everyone' | 'connections' | 'nobody'` to `user.schema.ts`, default `'connections'` (identical to the Iteration 4 policy, so existing behaviour does not change for anyone who never opens the setting).
+   - `GET /calls/settings` → `{ callPrivacy }`; `PATCH /calls/settings` with a validated DTO. Keep these in the call module rather than widening `users.controller.ts`.
+   - In `CallAuthorizationService`, after the block check: `nobody` → `CALLS_NOT_ACCEPTED`; `connections` → the existing relationship check (`NOT_CONNECTED`); `everyone` → skip the relationship check. Self-call, block, ban and `callingRestricted` checks still apply to everyone.
+3. **Pre-flight check — `GET /calls/can-call/:userId`.** Returns `{ allowed: boolean, code?: string }` by running the same `assertCanCall()` + capability + busy logic *without* creating anything. This lets the client disable or hide the call button with the right reason instead of letting the user tap and fail (frontend Iteration 14). Blocked and unavailable must still return the identical `USER_UNAVAILABLE`. Throttle it; it is called on every chat and profile view.
+4. **User-owned history — hide, never delete.**
+   - Add `hiddenFor: ObjectId[]` to `call.schema.ts` (additive; no migration needed).
+   - `DELETE /calls/:id` → `$addToSet: { hiddenFor: userId }`, participant only, idempotent.
+   - `DELETE /calls` → the same via `updateMany` over every call the user participates in ("Clear call history").
+   - Add `hiddenFor: { $ne: userId }` to the Iteration 10 history query. The other participant's history and all analytics are untouched, which is why this is a flag and not a delete.
+5. **Missed-call badge.**
+   - Add `callsSeenAt?: Date` to `user.schema.ts`.
+   - `GET /calls/unseen-count` → count of calls where the user is a participant but not the initiator, `status: missed`, `createdAt > callsSeenAt`, and not hidden. Served by the existing `{ participants: 1, createdAt: -1 }` index.
+   - `POST /calls/seen` → sets `callsSeenAt = now`.
+6. **Report a call.**
+   - Add `CALL = 'call'` to `ReportContentType` in `report.schema.ts`. The existing `POST /moderation/reports` then accepts `{ contentType: 'call', contentId: <call _id>, reason }`.
+   - In `ModerationService.createReport()`, for `call` reports verify the reporter was a participant (`403` otherwise), and store the *other* participant as the reported user so the admin queue groups it with that user's other reports.
+   - The admin report view shows call metadata — participants, type, start, duration, end reason. There is no media to show (no recording, by design).
+   - "Report and block" is the existing `POST /moderation/block/:userId`, which already terminates a live call via Iteration 7.
+7. **Post-call feedback.** Extend the Iteration 11 `POST /calls/:id/stats` payload with optional `rating: 1–5` and `issues: ('audio' | 'video' | 'dropped' | 'echo' | 'other')[]`. Store per-user under `metadata.feedback.<userId>`. Add "share of rated calls ≤ 2" to the Iteration 11 metrics — it catches quality regressions that packet stats miss.
+8. **Call-back data on missed-call notifications.** Include `callerId`, `callType`, and `conversationId` in the Iteration 10 `MissedCall` notification metadata, so the app can offer a "Call back" action straight from the notification (frontend Iteration 14).
+
+### Files / modules affected
+- `src/database/schemas/user/user.schema.ts` (`callingCapableAt`, `callPrivacy`, `callsSeenAt`)
+- `src/database/schemas/call/call.schema.ts` (`hiddenFor`)
+- `src/database/schemas/report/report.schema.ts` (`ReportContentType.CALL`)
+- `src/modules/call/call.controller.ts`, `call.service.ts`, `call-authorization.service.ts`, `call.constants.ts`
+- `src/modules/call/dto/update-call-settings.dto.ts` *(new)*
+- `src/modules/moderation/moderation.service.ts`
+- `src/modules/notification/*` (metadata only)
+
+### API / event flow
+```
+POST /calls/token ──> callingCapableAt = now   (at most once per 24h)
+
+GET /calls/can-call/:userId ──> assertCanCall + capability + busy ──> { allowed, code }
+POST /calls ──> assertCanCall (incl. callPrivacy) ──> capability ──> 409 CALLEE_UNSUPPORTED
+                                                               └──> [Iteration 5 flow]
+
+GET|PATCH /calls/settings          { callPrivacy }
+DELETE /calls/:id | DELETE /calls  ──> hiddenFor += me
+GET /calls/unseen-count            ──> missed since callsSeenAt
+POST /calls/seen                   ──> callsSeenAt = now
+
+POST /moderation/reports { contentType: 'call', contentId } ──> participant check ──> report
+POST /calls/:id/stats { ..., rating, issues }               ──> metadata.feedback.<me>
+```
+
+### Error and edge-case handling
+- **Callee reinstalled an old build after using calling** → `callingCapableAt` is already set, so they ring and time out as `missed`. Rare and self-correcting. If it matters later, have the client send an `X-App-Version` header and compare against a minimum version.
+- **Callee switches to `nobody` mid-call** → does not end the live call; it applies to new calls only.
+- **`CALLS_NOT_ACCEPTED` versus block leakage** → a blocked caller must always get `USER_UNAVAILABLE`, even when the callee's privacy is `nobody`. Keep the block check *before* the privacy check.
+- **`can-call` result goes stale** → it is advisory only. `POST /calls` re-runs every check, and the client must handle its codes too.
+- **Report on a call the reporter was not in** → `403`. The call ID alone is not authorization.
+- **Hiding a live call** → allowed. It only affects that user's list.
+- **Unseen count after "Clear call history"** → hidden calls are excluded from the count, so the badge clears as well.
+
+### Testing procedure
+1. User who has never fetched a token → calling them returns `409 CALLEE_UNSUPPORTED`; nothing is written to Mongo or Stream.
+2. Fetch a token as that user → the next call rings normally. Fetch 10 tokens in a row → `callingCapableAt` is written once.
+3. `callPrivacy: nobody` → `403 CALLS_NOT_ACCEPTED`. `everyone` + no relationship → allowed. `connections` → the Iteration 4 behaviour.
+4. Callee has blocked caller *and* set `nobody` → the caller gets `USER_UNAVAILABLE`, not `CALLS_NOT_ACCEPTED`.
+5. `can-call` matches the `POST /calls` outcome for every case above.
+6. `DELETE /calls/:id` → gone from my history, still in the other user's history.
+7. Two missed calls → `unseen-count` = 2; `POST /calls/seen` → 0; one more missed call → 1.
+8. Report a call as a participant → report created; as a third party → `403`.
+9. Stats with `rating: 9` → rejected or clamped, never stored raw.
+10. Missed-call notification payload includes `callerId`, `callType`, `conversationId`.
+
+### Expected result
+Calls only ring people who can answer, users control who can reach them, and history, badges and reporting behave the way users expect from a calling app.
+
+### Completion criteria
+- [ ] Old-build callees return `CALLEE_UNSUPPORTED` instead of timing out
+- [ ] `callPrivacy` enforced, defaulting to today's policy
+- [ ] Block state never leaks through the privacy or capability responses
+- [ ] `can-call` agrees with `POST /calls` in every tested case
+- [ ] History hide/clear is per user and non-destructive
+- [ ] Missed-call unseen count correct and index-backed
+- [ ] Calls reportable by participants only
+- [ ] Missed-call notification carries call-back data
+
+---
+
+# Iteration 13 — Production hardening and launch readiness
 
 ### Goal
 Close the gap between "works on my machine with two test accounts" and "safe to put in front of users."
 
 ### Prerequisites
-- Iterations 1–11 complete and verified.
+- Iterations 1–12 complete and verified.
 
 ### Implementation steps
 1. **Environment separation** — a **separate Stream app** for staging and production. A shared app means staging test calls ring real users' phones. Non-negotiable.
@@ -967,12 +1067,13 @@ The feature can be enabled for real users with a rollback switch, a runbook, and
 │                        │    └── 9 (timeouts)
 │                        │         └── 10 (history, chat, notifications)
 │                        │              └── 11 (abuse, observability)
-│                        │                   └── 12 (hardening)
+│                        │                   └── 12 (capability, privacy, user-owned data)
+│                        │                        └── 13 (hardening)
 ```
 
 **Minimum viable ringing call:** Iterations 1 → 2 → 3 → 4 → 5 → 6.
 **Minimum trustworthy call records:** add 7 → 8 → 9.
-**Minimum shippable:** all twelve.
+**Minimum shippable:** all thirteen.
 
 ## Deliberate non-goals
 

@@ -114,6 +114,20 @@ export class ENV {
     return configService.get<string>('FIREBASE_PRIVATE_KEY', '');
   }
 
+  // Stream Video (calling). The key is public and shipped to the app; the
+  // secret signs user tokens and verifies webhooks, and never leaves the server.
+  static get STREAM_API_KEY(): string {
+    return configService.get<string>('STREAM_API_KEY', '').trim();
+  }
+
+  static get STREAM_API_SECRET(): string {
+    return configService.get<string>('STREAM_API_SECRET', '').trim();
+  }
+
+  static get STREAM_APP_ID(): string {
+    return configService.get<string>('STREAM_APP_ID', '').trim();
+  }
+
   // Bull Queue
   static get BULL_REDIS_HOST(): string {
     return configService.get<string>('BULL_REDIS_HOST', this.REDIS_HOST);

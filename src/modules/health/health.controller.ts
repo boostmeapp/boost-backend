@@ -54,6 +54,19 @@ export class HealthController {
   }
 
   /**
+   * Stream Video (calling) connectivity. `?check=true` bypasses the 30s probe
+   * cache. Never returns the API key or secret.
+   */
+  @Public()
+  @Get('stream')
+  async stream(@Query('check') check?: string) {
+    const result = await this.healthService.checkStream(
+      check === 'true' || check === '1',
+    );
+    return { ...result, timestamp: new Date().toISOString() };
+  }
+
+  /**
    * Which mail transport is live right now, and whether it is healthy.
    * `?check=true` re-runs the connectivity probe instead of reporting the
    * result cached at boot, so a config fix can be confirmed without a restart.
