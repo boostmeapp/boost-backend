@@ -128,6 +128,22 @@ export class ENV {
     return configService.get<string>('STREAM_APP_ID', '').trim();
   }
 
+  // Push provider *names* as configured in the Stream dashboard. Served to the
+  // app so the same binary works against any backend. The APNs one is chosen
+  // per app build (sandbox for development builds, production for staging /
+  // TestFlight / App Store) — not per backend environment.
+  static get STREAM_APN_PROVIDER_SANDBOX(): string {
+    return configService.get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-sandbox').trim();
+  }
+
+  static get STREAM_APN_PROVIDER_PRODUCTION(): string {
+    return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-production').trim();
+  }
+
+  static get STREAM_FIREBASE_PROVIDER(): string {
+    return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
+  }
+
   // Bull Queue
   static get BULL_REDIS_HOST(): string {
     return configService.get<string>('BULL_REDIS_HOST', this.REDIS_HOST);

@@ -18,7 +18,9 @@ import { RedisService } from '../redis/redis.service';
 import { StreamUserProfile, StreamVideoService } from './stream-video.service';
 import { CallAuthorizationService } from './call-authorization.service';
 import { InitiateCallDto } from './dto/initiate-call.dto';
+import { ENV } from '../../config';
 import {
+  ApnsEnvironment,
   CALL_INIT_LOCK_TTL_SECONDS,
   CallEndReason,
   CallErrorCode,
@@ -34,6 +36,12 @@ export interface StreamTokenResponse {
   token: string;
   userId: string;
   expiresAt: string;
+  /** Provider names the app passes to Stream when registering device tokens. */
+  push: {
+    apnsEnvironment: ApnsEnvironment;
+    apnProviderName: string;
+    firebaseProviderName: string;
+  };
 }
 
 export interface InitiateCallResponse {
@@ -66,7 +74,10 @@ export class CallService {
    * The auth bridge: a Boostra user gets a Stream token for themselves. Also the
    * narrowest choke point for revoking calling access.
    */
-  async issueToken(user: User): Promise<StreamTokenResponse> {
+  async issueToken(
+    user: User,
+    apnsEnvironment: ApnsEnvironment = ApnsEnvironment.Production,
+  ): Promise<StreamTokenResponse> {
     // Throws 503 before anything else when calling is disabled.
     const apiKey = this.streamVideo.getApiKey();
 
@@ -103,6 +114,16 @@ export class CallService {
       expiresAt: new Date(
         Date.now() + STREAM_TOKEN_VALIDITY_SECONDS * 1000,
       ).toISOString(),
+      push: {
+        apnsEnvironment,
+        // Chosen by the *app build's* APNs environment, never by NODE_ENV:
+        // staging builds are production-APNs but talk to the dev backend.
+        apnProviderName:
+          apnsEnvironment === ApnsEnvironment.Development
+            ? ENV.STREAM_APN_PROVIDER_SANDBOX
+            : ENV.STREAM_APN_PROVIDER_PRODUCTION,
+        firebaseProviderName: ENV.STREAM_FIREBASE_PROVIDER,
+      },
     };
   }
 

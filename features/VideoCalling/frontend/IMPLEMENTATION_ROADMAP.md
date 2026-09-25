@@ -227,7 +227,7 @@ Fetch a Stream token from the backend and construct an authenticated `StreamVide
 ### Implementation steps
 1. Add call endpoints to `src/config/api.config.js` under a `CALLS` key, matching the existing `CHAT` structure: `TOKEN`, `INITIATE`, `HISTORY`, `ACCEPT`, `REJECT`, `END`.
 2. Create `src/services/callService.js`, following the established service pattern (`chatService.js` is the closest model — module object, `apiClient`, `handleApiError`):
-   - `async fetchToken()` → `POST /calls/token` via `apiClient`, returns `{ apiKey, token, userId, push }`.
+   - `async fetchToken()` → `POST /calls/token` via `apiClient` with body `{ apnsEnvironment }`, returns `{ apiKey, token, userId, push }`. `apnsEnvironment` is `'development'` for the development variant and `'production'` for every other variant — the same rule as `APNS_MODE` in `app.config.js`. Expose it from the config (e.g. via `extra`) rather than re-deriving it, so the two can never disagree. Getting this wrong makes killed-app ringing fail silently on iOS.
    - `async connect(user)` → builds the client:
      ```js
      StreamVideoClient.getOrCreateInstance({
@@ -708,7 +708,7 @@ Make calls ring on a **locked or killed iPhone** with the native iOS call UI. Th
 
 ### Implementation steps
 1. Create `src/services/callkitService.js` wrapping `react-native-callkeep` and `react-native-voip-push-notification`.
-2. **Register the VoIP token.** On app start when authenticated, register for PushKit, obtain the VoIP token, and pass it to the Stream client along with the `apnProviderName` from the token response (backend Iteration 6). The backend supplies the provider name specifically so the same binary works against staging and production.
+2. **Register the VoIP token.** On app start when authenticated, register for PushKit, obtain the VoIP token, and pass it to the Stream client along with the `apnProviderName` from the token response (backend Iteration 6). The backend picks that name from the `apnsEnvironment` the app sent (Iteration 3), so it always matches the build's APNs entitlement, whichever backend the build talks to.
 3. **Set up CallKeep** with the display name, a ringtone, and `supportsVideo: true`.
 4. **The critical constraint:** iOS *requires* that every PushKit VoIP push results in a `reportNewIncomingCall` — synchronously, in the same execution. Miss it and iOS terminates the app and eventually revokes VoIP privileges entirely. Report to CallKit **first**, then do any other work. The Stream SDK provides a helper for this path; use it rather than hand-rolling, and do not add any `await` before the report.
 5. Wire CallKeep events:

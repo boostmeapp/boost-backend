@@ -5,6 +5,7 @@ import { CurrentUser } from '../../common/decorators';
 import { User } from '../../database/schemas/user/user.schema';
 import { CallService } from './call.service';
 import { InitiateCallDto } from './dto/initiate-call.dto';
+import { IssueTokenDto } from './dto/issue-token.dto';
 
 @Controller('calls')
 @UseGuards(JwtAuthGuard)
@@ -16,8 +17,8 @@ export class CallController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('token')
   @HttpCode(HttpStatus.OK)
-  token(@CurrentUser() user: User) {
-    return this.callService.issueToken(user);
+  token(@CurrentUser() user: User, @Body() dto: IssueTokenDto) {
+    return this.callService.issueToken(user, dto.apnsEnvironment);
   }
 
   // A coarse burst cap; the real per-caller limit is Iteration 11.

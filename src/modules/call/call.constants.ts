@@ -40,6 +40,16 @@ export enum CallErrorCode {
   CallFailed = 'CALL_FAILED',
 }
 
+/**
+ * Which APNs environment the app build is signed for. Mirrors APNS_MODE in the
+ * app's app.config.js: `development` only for development builds; staging,
+ * TestFlight and App Store builds are all `production`.
+ */
+export enum ApnsEnvironment {
+  Development = 'development',
+  Production = 'production',
+}
+
 /** Stream call type. `default` has ringing enabled — verified in the dashboard. */
 export const STREAM_CALL_TYPE = 'default';
 

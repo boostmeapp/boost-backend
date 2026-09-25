@@ -8,7 +8,9 @@ import {
 import { Types } from 'mongoose';
 import { CallService } from './call.service';
 import { CallForbiddenException } from './call-authorization.service';
+import { ENV } from '../../config';
 import {
+  ApnsEnvironment,
   CallDenialReason,
   CallEndReason,
   CallErrorCode,
@@ -47,6 +49,11 @@ class FakeRedis {
 }
 
 describe('CallService', () => {
+  beforeAll(() => {
+    // Built-in defaults for every ENV getter.
+    ENV.init({ get: (_key: string, fallback: unknown) => fallback } as any);
+  });
+
   let streamVideo: any;
   let callAuthorization: any;
   let callModel: any;
@@ -107,6 +114,25 @@ describe('CallService', () => {
       });
       const expiresIn = Date.parse(res.expiresAt) - before;
       expect(Math.abs(expiresIn - STREAM_TOKEN_VALIDITY_SECONDS * 1000)).toBeLessThan(5_000);
+    });
+
+    it('defaults to the production APNs provider (store / TestFlight / staging builds)', async () => {
+      const res = await service.issueToken(makeUser());
+
+      expect(res.push).toEqual({
+        apnsEnvironment: ApnsEnvironment.Production,
+        apnProviderName: 'boostra-voip-production',
+        firebaseProviderName: 'boostra-android',
+      });
+    });
+
+    it('serves the sandbox APNs provider to development builds', async () => {
+      const res = await service.issueToken(makeUser(), ApnsEnvironment.Development);
+
+      expect(res.push).toMatchObject({
+        apnsEnvironment: ApnsEnvironment.Development,
+        apnProviderName: 'boostra-voip-sandbox',
+      });
     });
 
     it('upserts the Mongo id, display name, and avatar to Stream', async () => {

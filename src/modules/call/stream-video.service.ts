@@ -15,6 +15,17 @@ export interface StreamUserProfile {
   image?: string;
 }
 
+/**
+ * Whether a push provider the app will be told to use actually works:
+ * `missing` / `disabled` / `not_voip` all mean calls silently won't ring.
+ */
+export type PushProviderState = 'ok' | 'missing' | 'disabled' | 'not_voip' | 'unknown';
+
+export interface PushProviderCheck {
+  name: string;
+  state: PushProviderState;
+}
+
 /** Stream connectivity as reported by health. Safe to expose — no secrets. */
 export interface StreamStatus {
   enabled: boolean;
@@ -23,6 +34,11 @@ export interface StreamStatus {
   responseTime: number | null;
   detail: string | null;
   checkedAt: string | null;
+  push: {
+    apnSandbox: PushProviderCheck;
+    apnProduction: PushProviderCheck;
+    firebase: PushProviderCheck;
+  } | null;
 }
 
 /** Health endpoints are public and unthrottled; don't let them hammer Stream's API. */
@@ -45,6 +61,7 @@ export class StreamVideoService implements OnModuleInit {
     responseTime: null,
     detail: null,
     checkedAt: null,
+    push: null,
   };
 
   onModuleInit() {
@@ -160,6 +177,7 @@ export class StreamVideoService implements OnModuleInit {
       await this.client.getApp();
       this.status.reachable = true;
       this.status.detail = null;
+      await this.checkPushProviders();
     } catch (err) {
       const wasReachable = this.status.reachable;
       this.status.reachable = false;
@@ -170,6 +188,64 @@ export class StreamVideoService implements OnModuleInit {
     } finally {
       this.status.responseTime = Date.now() - start;
       this.status.checkedAt = new Date().toISOString();
+    }
+  }
+
+  /**
+   * Compare the provider names we hand to the app with what the Stream app
+   * actually has. A mismatch is the classic "calls don't ring on locked
+   * phones" failure, and it produces no error anywhere else. Informational:
+   * it never marks Stream itself as down.
+   */
+  private async checkPushProviders(): Promise<void> {
+    const expected = {
+      apnSandbox: { name: ENV.STREAM_APN_PROVIDER_SANDBOX, apn: true },
+      apnProduction: { name: ENV.STREAM_APN_PROVIDER_PRODUCTION, apn: true },
+      firebase: { name: ENV.STREAM_FIREBASE_PROVIDER, apn: false },
+    };
+
+    let providers: {
+      name: string;
+      type: string;
+      disabled_at?: Date;
+      apn_supports_voip_notifications?: boolean;
+    }[];
+    try {
+      providers = (await this.client!.listPushProviders()).push_providers ?? [];
+    } catch (err) {
+      this.logger.warn(`Could not list Stream push providers: ${(err as Error).message}`);
+      const unknown = (name: string): PushProviderCheck => ({ name, state: 'unknown' });
+      this.status.push = {
+        apnSandbox: unknown(expected.apnSandbox.name),
+        apnProduction: unknown(expected.apnProduction.name),
+        firebase: unknown(expected.firebase.name),
+      };
+      return;
+    }
+
+    const check = ({ name, apn }: { name: string; apn: boolean }): PushProviderCheck => {
+      const p = providers.find((x) => x.name === name && x.type === (apn ? 'apn' : 'firebase'));
+      if (!p) return { name, state: 'missing' };
+      if (p.disabled_at) return { name, state: 'disabled' };
+      if (apn && !p.apn_supports_voip_notifications) return { name, state: 'not_voip' };
+      return { name, state: 'ok' };
+    };
+
+    const previous = this.status.push;
+    this.status.push = {
+      apnSandbox: check(expected.apnSandbox),
+      apnProduction: check(expected.apnProduction),
+      firebase: check(expected.firebase),
+    };
+
+    // Warn on change only, so a missing provider in dev doesn't spam every probe.
+    for (const [key, result] of Object.entries(this.status.push)) {
+      const before = previous?.[key as keyof typeof expected]?.state;
+      if (result.state !== 'ok' && result.state !== before) {
+        this.logger.warn(
+          `Stream push provider "${result.name}" (${key}) is ${result.state} — calls will not ring on locked devices for builds that use it.`,
+        );
+      }
     }
   }
 }

@@ -118,7 +118,12 @@ export class HealthService {
       status: s.enabled && s.reachable ? 'up' : 'down',
       responseTime: s.responseTime ?? undefined,
       message: s.enabled ? (s.detail ?? undefined) : `Calling disabled: ${s.detail}`,
-      details: { enabled: s.enabled, appId: s.appId, checkedAt: s.checkedAt },
+      details: {
+        enabled: s.enabled,
+        appId: s.appId,
+        checkedAt: s.checkedAt,
+        push: s.push,
+      },
     };
   }
 

@@ -60,6 +60,9 @@ src/database/schemas/call/
 | `STREAM_API_KEY` | Iteration 1 | Public app key, also shipped to client |
 | `STREAM_API_SECRET` | Iteration 1 | Server-only; signs user tokens, verifies webhooks |
 | `STREAM_APP_ID` | Iteration 1 | Dashboard reference / logging |
+| `STREAM_APN_PROVIDER_SANDBOX` | Iteration 6 | Stream APNs provider name for development builds (default `boostra-voip-sandbox`) |
+| `STREAM_APN_PROVIDER_PRODUCTION` | Iteration 6 | Stream APNs provider name for staging/TestFlight/store builds (default `boostra-voip-production`) |
+| `STREAM_FIREBASE_PROVIDER` | Iteration 6 | Stream Firebase provider name (default `boostra-android`) |
 | `STREAM_WEBHOOK_ENABLED` | Iteration 8 | Kill switch for webhook ingestion |
 | `CALL_RING_TIMEOUT_SECONDS` | Iteration 9 | Default `45` |
 | `CALL_MAX_PER_HOUR` | Iteration 11 | Per-caller abuse cap, default `30` |
@@ -436,7 +439,7 @@ Configure the push providers in Stream so an incoming call reaches a device whos
 
 ### Prerequisites
 - Iteration 5.
-- **Apple:** an APNs **VoIP Services certificate** (`.p8` auth key or `.p12`) for bundle ID `com.boostra.mobile`, created in the Apple Developer portal. This is a *separate credential from your FCM/APNs push key* — PushKit VoIP pushes do not use the standard APNs certificate.
+- **Apple:** an APNs **`.p8` auth key** for team `MYJNL7NN38` (bundle ID `com.boostra.mobile`). A token-based `.p8` key sends VoIP pushes too and never expires, so an existing APNs key can be reused. Only the older certificate route needs a *separate* `.p12` VoIP Services certificate, and it expires yearly; avoid it.
 - **Android:** the Firebase service account JSON for the project already backing `google-services.json`.
 
 ### Implementation steps
@@ -446,10 +449,11 @@ Configure the push providers in Stream so an incoming call reaches a device whos
    - Note the exact provider *names*; the client passes them when registering device tokens.
 2. Expose the provider names to the client. Add them to the `POST /calls/token` response:
    ```json
-   { "apiKey": "...", "token": "...", "push": { "apnProviderName": "boostra-voip-dev", "firebaseProviderName": "boostra-android" } }
+   { "apiKey": "...", "token": "...", "push": { "apnsEnvironment": "production", "apnProviderName": "boostra-voip-production", "firebaseProviderName": "boostra-android" } }
    ```
    This keeps environment-specific names out of the app bundle — the same binary works against staging and production.
-3. Select the provider name by environment on the server (`ENV.IS_PRODUCTION`), so a TestFlight build automatically gets the production APNs provider.
+3. **Select the APNs provider by the app build's APNs environment, not by `NODE_ENV`.** The app sends `{ apnsEnvironment: 'development' | 'production' }` in the `POST /calls/token` body (default `production`). This matters because staging builds use **production** APNs (`APNS_MODE` in `app.config.js`) but talk to the **dev** backend, so selecting by `ENV.IS_PRODUCTION` would hand them the sandbox provider and every push would be silently dropped. Provider names come from `STREAM_APN_PROVIDER_SANDBOX`, `STREAM_APN_PROVIDER_PRODUCTION` and `STREAM_FIREBASE_PROVIDER`.
+   - The Stream health probe also lists the app's push providers and reports each configured name as `ok` / `missing` / `disabled` / `not_voip` under `/health/stream` → `details.push`, so a misconfiguration is visible instead of silent.
 4. **Do not build your own VoIP push dispatch.** Stream sends the ring push. Your existing `NotificationService` is used in Iteration 10 for *missed-call* notifications only — a different, non-urgent path.
 5. Document the credential rotation procedure in `boost-backend/docs/` — VoIP certificates expire, and the failure mode (calls silently stop ringing on locked iPhones) is very hard to diagnose cold.
 
@@ -471,9 +475,9 @@ The backend is not on the push path. It only supplies the provider configuration
 
 ### Error and edge-case handling
 - **Wrong APNs environment** — the single most common failure. A development build registered against the production provider gets a sandbox token, and every push is dropped **without error**. The `APNS_MODE` logic in `app.config.js` already handles the entitlement; the Stream provider choice must match it.
-- **Standard APNs key used instead of VoIP** → pushes are accepted and never delivered. Verify the key's purpose in the Apple portal.
+- **APNs provider without VoIP enabled** → pushes are accepted and never delivered. The health check reports it as `not_voip`.
 - **Bundle ID mismatch** — note that iOS is `com.boostra.mobile` and Android is `com.boostra.app`. Easy to cross-wire.
-- **Expired certificate** → silent ring failure. The runbook and a calendar reminder are the mitigation.
+- **Expired or revoked credential** → silent ring failure. `.p8` keys don't expire but can be revoked; `.p12` certificates expire yearly. The runbook covers rotation.
 - **User revoked notification permission** → cannot be fixed server-side. In-app ringing still works; frontend Iteration 11 handles the prompt.
 
 ### Testing procedure
@@ -482,7 +486,8 @@ The backend is not on the push path. It only supplies the provider configuration
 3. **Force-kill the app.** Initiate again → it still rings. This is the definitive test.
 4. Repeat both on a physical Android device.
 5. Use Stream's dashboard push-test tool to verify each provider in isolation before blaming application code.
-6. Verify a staging build resolves the production APNs provider.
+6. Verify a staging build (sending `apnsEnvironment: production` to the dev backend) resolves the production APNs provider.
+7. `GET /health/stream?check=true` → every configured provider reports `ok`.
 
 > Simulators cannot receive VoIP pushes. Physical devices only, for every test in this iteration.
 
@@ -494,7 +499,7 @@ An incoming call rings a locked, backgrounded, or killed device on both platform
 - [ ] Provider names served by the API, not hardcoded in the app
 - [ ] Verified ringing on a **locked** physical iPhone with the app **killed**
 - [ ] Same verified on physical Android
-- [ ] Rotation runbook written with the certificate expiry date recorded
+- [ ] Rotation runbook written (`docs/video-calling-push-runbook.md`) with credential holders recorded
 
 ---
 
@@ -994,7 +999,7 @@ Close the gap between "works on my machine with two test accounts" and "safe to 
 4. **Load sanity check** — at 50–100 users you will not stress Stream. Do verify that your *own* endpoints hold: 50 concurrent `POST /calls/token` should not saturate the instance. Token generation is local HMAC and should be sub-millisecond; if it is not, something is wrong.
 5. **Cost monitoring** — a weekly job summing `durationSeconds × 2` (participant-minutes) against the Maker allowance. Alert at 70%. The Maker Account has hard limits rather than overage billing, so hitting the ceiling means **calls stop working**, not a surprise invoice. That failure mode must be caught early.
 6. **Runbook** in `boost-backend/docs/video-calling-runbook.md`:
-   - "Calls do not ring on iOS" → check APNs VoIP certificate expiry, environment match, Stream provider config, device token registration. In that order.
+   - "Calls do not ring on iOS" → already covered in `docs/video-calling-push-runbook.md`; link it rather than duplicating.
    - "Calls ring but do not connect" → Stream status page, client network, TURN reachability.
    - "Call records stuck active" → check webhook delivery in the dashboard, then the sweeper logs.
    - Certificate rotation procedure and expiry dates.
