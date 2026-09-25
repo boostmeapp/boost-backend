@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException 
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, Message, User } from '../../database/schemas';
+import { MessageType } from '../../database/schemas/chat/message.schema';
 import { UploadService } from '../upload/upload.service';
 
 @Injectable()
@@ -346,6 +347,62 @@ export class ChatService {
     }
 
     return resultObj;
+  }
+
+  /**
+   * Record a call in its chat thread as a `call` system message, and update
+   * the conversation preview. `text` is always a readable summary ("Missed
+   * video call", "Voice call · 4:12") so app versions that predate call
+   * messages show something sensible instead of an empty bubble.
+   * Bypasses the block check on purpose — callers decide whether to write.
+   */
+  async createCallEventMessage(args: {
+    conversationId: string;
+    initiatorId: string;
+    calleeId: string;
+    text: string;
+    call: { callId: string; callType: string; status: string; durationSeconds: number };
+    /** Whether this counts as unread for the callee (e.g. a missed call). */
+    countAsUnread: boolean;
+  }) {
+    const initiator = new Types.ObjectId(args.initiatorId);
+
+    const message = await this.messageModel.create({
+      type: MessageType.Call,
+      conversation: new Types.ObjectId(args.conversationId),
+      sender: initiator,
+      recipient: new Types.ObjectId(args.calleeId),
+      text: args.text,
+      call: {
+        callId: new Types.ObjectId(args.call.callId),
+        callType: args.call.callType,
+        status: args.call.status,
+        durationSeconds: args.call.durationSeconds,
+      },
+      isRead: !args.countAsUnread,
+    });
+
+    const populated = await this.messageModel
+      .findById(message._id)
+      .populate('sender', 'username firstName lastName name avatar profileImage')
+      .exec();
+
+    const conversation = await this.conversationModel.findById(args.conversationId);
+    if (conversation) {
+      conversation.lastMessage = {
+        text: args.text,
+        sender: initiator,
+        createdAt: message.createdAt,
+      };
+      if (args.countAsUnread) {
+        const current = conversation.unreadCount.get(args.calleeId) || 0;
+        conversation.unreadCount.set(args.calleeId, current + 1);
+        conversation.markModified('unreadCount');
+      }
+      await conversation.save();
+    }
+
+    return populated ? populated.toObject() : message.toObject();
   }
 
   /**

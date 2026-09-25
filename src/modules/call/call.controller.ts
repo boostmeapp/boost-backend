@@ -1,4 +1,15 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { CallHistoryQueryDto } from './dto/call-history-query.dto';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
@@ -19,6 +30,11 @@ export class CallController {
   @HttpCode(HttpStatus.OK)
   token(@CurrentUser() user: User, @Body() dto: IssueTokenDto) {
     return this.callService.issueToken(user, dto.apnsEnvironment);
+  }
+
+  @Get()
+  history(@CurrentUser() user: User, @Query() query: CallHistoryQueryDto) {
+    return this.callService.getHistory(user, query);
   }
 
   // A coarse burst cap; the real per-caller limit is Iteration 11.

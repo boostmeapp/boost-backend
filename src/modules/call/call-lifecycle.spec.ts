@@ -70,6 +70,7 @@ describe('Call lifecycle', () => {
   let streamVideo: { endCall: jest.Mock };
   let queue: { getJob: jest.Mock };
   let job: { remove: jest.Mock };
+  let callEvents: { onCallTerminated: jest.Mock };
   let service: CallService;
   let caller: any;
   let callee: any;
@@ -93,6 +94,7 @@ describe('Call lifecycle', () => {
   beforeEach(() => {
     model = new FakeCallModel();
     streamVideo = { endCall: jest.fn().mockResolvedValue(undefined) };
+    callEvents = { onCallTerminated: jest.fn().mockResolvedValue(undefined) };
     job = { remove: jest.fn().mockResolvedValue(undefined) };
     queue = { getJob: jest.fn().mockResolvedValue(job) };
     service = new CallService(
@@ -103,6 +105,7 @@ describe('Call lifecycle', () => {
       {} as any,
       {} as any,
       queue as any,
+      callEvents as any,
     );
     caller = user();
     callee = user();
@@ -392,6 +395,40 @@ describe('Call lifecycle', () => {
       await service.applyTransition(call._id, CallStatus.Ended, { maxDurationSeconds: 6 * 3600 });
 
       expect(model.docs.get(String(call._id)).durationSeconds).toBe(6 * 3600);
+    });
+  });
+  describe('post-call events (Iteration 10)', () => {
+    it('fire once when a call reaches a terminal status, with the final record', async () => {
+      const call = newCall({ status: CallStatus.Active, answeredAt: new Date() });
+
+      await act(caller, call, 'end');
+      await act(callee, call, 'end'); // idempotent repeat
+
+      expect(callEvents.onCallTerminated).toHaveBeenCalledTimes(1);
+      expect(callEvents.onCallTerminated.mock.calls[0][0]).toMatchObject({
+        status: CallStatus.Ended,
+        durationSeconds: expect.any(Number),
+      });
+    });
+
+    it('do not fire on a non-terminal transition (accept)', async () => {
+      await act(callee, newCall(), 'accept');
+
+      expect(callEvents.onCallTerminated).not.toHaveBeenCalled();
+    });
+
+    it('fire for a ring timeout (missed) too', async () => {
+      await service.expireRingingCall(newCall()._id, { fromRingTimeout: true });
+
+      expect(callEvents.onCallTerminated.mock.calls[0][0].status).toBe(CallStatus.Missed);
+    });
+
+    it('a failing side effect never fails the transition', async () => {
+      callEvents.onCallTerminated.mockRejectedValue(new Error('chat down'));
+
+      await expect(act(callee, newCall(), 'reject')).resolves.toMatchObject({
+        status: CallStatus.Rejected,
+      });
     });
   });
 });

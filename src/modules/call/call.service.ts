@@ -20,6 +20,9 @@ import { displayName } from '../../common/utils/display-name.util';
 import { RedisService } from '../redis/redis.service';
 import { StreamUserProfile, StreamVideoService } from './stream-video.service';
 import { CallAuthorizationService } from './call-authorization.service';
+import { CallEventsService } from './call-events.service';
+import { CallHistoryQueryDto } from './dto/call-history-query.dto';
+import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { InitiateCallDto } from './dto/initiate-call.dto';
 import { ENV } from '../../config';
 import {
@@ -62,6 +65,23 @@ export interface InitiateCallResponse {
   stream: { type: string; id: string };
   callType: CallType;
   callee: StreamUserProfile;
+  createdAt: Date;
+}
+
+export interface CallHistoryItem {
+  callId: string;
+  callType: CallType;
+  status: CallStatus;
+  /** Relative to the requester, so the client never has to derive it. */
+  direction: 'incoming' | 'outgoing';
+  /** The other participant. id is null when their account is gone. */
+  otherParticipant: { id: string | null; name: string; image: string | null };
+  conversationId: string | null;
+  ringStartedAt: Date;
+  answeredAt: Date | null;
+  endedAt: Date | null;
+  durationSeconds: number | null;
+  endedReason: CallEndReason | null;
   createdAt: Date;
 }
 
@@ -115,6 +135,7 @@ export class CallService {
     private readonly callAuthorization: CallAuthorizationService,
     private readonly redis: RedisService,
     @InjectQueue(CALL_QUEUE) private readonly callQueue: Queue<RingTimeoutJob>,
+    private readonly callEvents: CallEventsService,
   ) {}
 
   /**
@@ -276,6 +297,66 @@ export class CallService {
   }
 
   /**
+   * The requester's call history, newest first. Always scoped to calls the
+   * requester took part in — the user id never comes from the query string.
+   * Served by the { participants: 1, createdAt: -1 } index.
+   */
+  async getHistory(
+    user: User,
+    query: CallHistoryQueryDto,
+  ): Promise<PaginatedResult<CallHistoryItem>> {
+    const userId = user._id.toString();
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+
+    const filter: Record<string, unknown> = {
+      participants: new Types.ObjectId(userId),
+    };
+    if (query.conversationId) filter.conversation = new Types.ObjectId(query.conversationId);
+    if (query.status) filter.status = query.status;
+
+    const [rows, total] = await Promise.all([
+      this.callModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        // Only the display fields — never the full user document.
+        .populate('participants', '_id username firstName lastName profileImage')
+        .lean(),
+      this.callModel.countDocuments(filter),
+    ]);
+
+    const data = rows.map((c: any): CallHistoryItem => {
+      // A deleted account populates as null; keep the row, with a placeholder.
+      const other = (c.participants as any[]).find(
+        (p) => !p || String(p._id) !== userId,
+      );
+      return {
+        callId: String(c._id),
+        callType: c.callType,
+        status: c.status,
+        direction: String(c.initiator) === userId ? 'outgoing' : 'incoming',
+        otherParticipant: other
+          ? { id: String(other._id), name: displayName(other, 'Boostra user'), image: other.profileImage || null }
+          : { id: null, name: 'Deleted user', image: null },
+        conversationId: c.conversation ? String(c.conversation) : null,
+        ringStartedAt: c.ringStartedAt,
+        answeredAt: c.answeredAt ?? null,
+        endedAt: c.endedAt ?? null,
+        durationSeconds: c.durationSeconds ?? null,
+        endedReason: c.endedReason ?? null,
+        createdAt: c.createdAt,
+      };
+    });
+
+    return {
+      data,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
    * A participant reports accept / reject / cancel / end. Record-keeping, not
    * control: the client already did it through the Stream SDK. The webhook
    * (Iteration 8) is the backstop when a client never reports.
@@ -399,6 +480,16 @@ export class CallService {
         if (current.status === CallStatus.Ringing && !opts.fromRingTimeout) {
           void this.cancelRingTimeout(String(updated._id));
         }
+        // Chat record + missed-call notification. Detached, and it never
+        // throws, so it can't undo or delay a correct record. Runs once per
+        // call because only the winning write reaches here.
+        if (isTerminalStatus(next)) {
+          this.callEvents
+            .onCallTerminated(updated)
+            .catch((err) =>
+              this.logger.error(`Call ${updated._id}: post-call events failed: ${(err as Error).message}`),
+            );
+        }
         return { call: updated, changed: true };
       }
       // Someone else moved it between our read and write — re-evaluate.
@@ -488,7 +579,7 @@ export class CallService {
       this.logger.error(`Could not stop ringing for ${call._id}: ${(err as Error).message}`);
     }
 
-    // TODO(Iteration 10): missed-call notification to the callee.
+    // The missed-call notification is sent by applyTransition's terminal hook.
     return true;
   }
 

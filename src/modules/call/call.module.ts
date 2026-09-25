@@ -9,6 +9,7 @@ import { CallController } from './call.controller';
 import { CallWebhookController } from './call-webhook.controller';
 import { CallWebhookService } from './call-webhook.service';
 import { CallSweeperCron } from './call-sweeper.cron';
+import { CallEventsService } from './call-events.service';
 import { CallTimeoutProcessor } from './processors/call-timeout.processor';
 import { CALL_QUEUE } from './call.constants';
 import { ChatModule } from '../chat/chat.module';
@@ -43,6 +44,7 @@ import {
     CallService,
     CallAuthorizationService,
     CallWebhookService,
+    CallEventsService,
     CallTimeoutProcessor,
     CallSweeperCron,
   ],

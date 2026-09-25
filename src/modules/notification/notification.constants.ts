@@ -10,6 +10,7 @@ export enum NotificationType {
   CommentLike = 'CommentLike',
   Coins = 'Coins',
   Boost = 'Boost',
+  MissedCall = 'MissedCall',
   System = 'System',
 }
 

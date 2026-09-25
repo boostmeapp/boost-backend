@@ -100,6 +100,7 @@ describe('CallService', () => {
       callAuthorization,
       redis as any,
       queue,
+      { onCallTerminated: jest.fn() } as any,
     );
   });
 
@@ -402,6 +403,85 @@ describe('CallService', () => {
       expect(streamVideo.createRingingCall.mock.calls[0][0].custom.conversationId).toBe(
         conversationId,
       );
+    });
+  });
+  describe('getHistory', () => {
+    let me: any;
+    let other: any;
+    let lastFilter: any;
+    let lastSkip: number;
+    let rows: any[];
+
+    beforeEach(() => {
+      me = makeUser();
+      other = { _id: oid(), username: 'bob', profileImage: 'https://cdn/b.jpg' };
+      rows = [];
+      const chain: any = {
+        sort: () => chain,
+        skip: (n: number) => ((lastSkip = n), chain),
+        limit: () => chain,
+        populate: () => chain,
+        lean: async () => rows,
+      };
+      callModel.find = jest.fn((f: any) => ((lastFilter = f), chain));
+      callModel.countDocuments = jest.fn(async () => 23);
+    });
+
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      _id: oid(),
+      callType: CallType.Video,
+      status: CallStatus.Ended,
+      initiator: me._id,
+      participants: [{ _id: me._id, username: 'me' }, other],
+      ringStartedAt: new Date(),
+      answeredAt: new Date(),
+      endedAt: new Date(),
+      durationSeconds: 252,
+      createdAt: new Date(),
+      ...overrides,
+    });
+
+    it('scopes to the requester, never a user id from the query', async () => {
+      await service.getHistory(me, { page: 1, limit: 10 } as any);
+
+      expect(String(lastFilter.participants)).toBe(me._id.toString());
+    });
+
+    it('computes direction relative to the requester and returns only the other participant', async () => {
+      rows = [row(), row({ initiator: other._id })];
+
+      const { data } = await service.getHistory(me, { page: 1, limit: 10 } as any);
+
+      expect(data.map((d) => d.direction)).toEqual(['outgoing', 'incoming']);
+      expect(data[0].otherParticipant).toEqual({
+        id: String(other._id),
+        name: 'bob',
+        image: 'https://cdn/b.jpg',
+      });
+    });
+
+    it('renders a deleted participant as a placeholder instead of failing', async () => {
+      rows = [row({ participants: [{ _id: me._id }, null] })];
+
+      const { data } = await service.getHistory(me, { page: 1, limit: 10 } as any);
+
+      expect(data[0].otherParticipant).toEqual({ id: null, name: 'Deleted user', image: null });
+    });
+
+    it('paginates with correct metadata', async () => {
+      const res = await service.getHistory(me, { page: 3, limit: 5 } as any);
+
+      expect(lastSkip).toBe(10);
+      expect(res.meta).toEqual({ page: 3, limit: 5, total: 23, totalPages: 5 });
+    });
+
+    it('filters by conversation and status when given', async () => {
+      const conversationId = oid().toString();
+
+      await service.getHistory(me, { page: 1, limit: 10, conversationId, status: CallStatus.Active } as any);
+
+      expect(String(lastFilter.conversation)).toBe(conversationId);
+      expect(lastFilter.status).toBe(CallStatus.Active);
     });
   });
 });

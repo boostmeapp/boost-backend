@@ -883,6 +883,10 @@ Put call buttons where users expect them, and make the pre-call experience clear
 2. **Profile screen** (`src/app/profile/[id].jsx`) → a call action, subject to the same authorization rules.
 3. **Call history** — a list view backed by `GET /calls`, showing direction, status, duration, and relative time. Place it in the chat tab or under settings; tapping a row re-initiates.
 4. **Call events in chat** — render the `call`-type message the backend writes (backend Iteration 10) as a distinct bubble: an icon, "Missed call" / "Outgoing call · 4:12", and a tap-to-call-back action. Extend the existing `react-native-gifted-chat` custom message rendering.
+   - Shape: `{ type: 'call', sender: <initiator>, recipient: <callee>, text, call: { callId, callType, status, durationSeconds } }`. Messages without `type` are text.
+   - `text` is a neutral fallback ("Missed video call", "Voice call · 4:12") that older app versions show as a normal bubble. Build the bubble's own copy from `call` and whether the viewer is the sender (e.g. "Outgoing call" vs "Incoming call"), not from `text`.
+   - They arrive live through the existing `newMessage` / `conversationUpdated` socket events.
+   - **Missed-call notifications** arrive as type `MissedCall` with `metadata: { callId, callerId, callType, conversationId? }`. Add a case to `handleRowPress` in `NotificationsScreen.jsx` and to the push tap handler: open the conversation when `conversationId` is present, otherwise the caller's profile. Current app versions ignore unknown types, so nothing breaks before this ships.
 5. **Disable rather than fail.** When `connectionState !== 'connected'`, or the user is blocked, or calling is disabled server-side, the call button is visibly disabled with a reason on tap. A button that always fails is worse than no button.
 6. **Permission pre-flight** — on first-ever call, show a short explanatory sheet before the OS prompt. Permission grant rates are materially higher with context, and a permanent denial is expensive to recover from.
 7. Hide call entry points entirely for blocked users, consistent with how the existing chat handles blocks.
