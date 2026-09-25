@@ -60,11 +60,13 @@ describe('CallService', () => {
   let userModel: any;
   let conversationModel: any;
   let redis: FakeRedis;
+  let queue: any;
   let liveCalls: { participants: Types.ObjectId[] }[];
   let service: CallService;
 
   beforeEach(() => {
     liveCalls = [];
+    queue = { add: jest.fn().mockResolvedValue({}), getJob: jest.fn().mockResolvedValue(null) };
     streamVideo = {
       getClient: jest.fn(),
       getApiKey: jest.fn().mockReturnValue('public-key'),
@@ -97,6 +99,7 @@ describe('CallService', () => {
       streamVideo,
       callAuthorization,
       redis as any,
+      queue,
     );
   });
 
@@ -213,6 +216,34 @@ describe('CallService', () => {
           custom: expect.objectContaining({ callId: res.callId, callType: CallType.Video }),
         }),
       );
+    });
+
+    it('schedules the ring timeout, keyed by call id, delayed by CALL_RING_TIMEOUT_SECONDS', async () => {
+      const res = await service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio });
+
+      expect(queue.add).toHaveBeenCalledWith(
+        'ring-timeout',
+        { callId: res.callId },
+        expect.objectContaining({ jobId: res.callId, delay: 45_000 }),
+      );
+    });
+
+    it('still returns the call when the timeout cannot be enqueued (the sweeper covers it)', async () => {
+      queue.add.mockRejectedValue(new Error('Redis down'));
+
+      await expect(
+        service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio }),
+      ).resolves.toMatchObject({ callType: CallType.Audio });
+    });
+
+    it('does not schedule a timeout when Stream creation fails', async () => {
+      streamVideo.createRingingCall.mockRejectedValue(new Error('boom'));
+
+      await service
+        .initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio })
+        .catch(() => undefined);
+
+      expect(queue.add).not.toHaveBeenCalled();
     });
 
     it('persists before calling Stream', async () => {

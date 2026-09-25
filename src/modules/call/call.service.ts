@@ -9,6 +9,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
 import { Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
 import { User } from '../../database/schemas/user/user.schema';
@@ -23,6 +25,9 @@ import { ENV } from '../../config';
 import {
   ApnsEnvironment,
   CALL_INIT_LOCK_TTL_SECONDS,
+  CALL_QUEUE,
+  CallJobs,
+  RingTimeoutJob,
   CALL_TRANSITIONS,
   DEFAULT_END_REASON,
   isTerminalStatus,
@@ -109,6 +114,7 @@ export class CallService {
     private readonly streamVideo: StreamVideoService,
     private readonly callAuthorization: CallAuthorizationService,
     private readonly redis: RedisService,
+    @InjectQueue(CALL_QUEUE) private readonly callQueue: Queue<RingTimeoutJob>,
   ) {}
 
   /**
@@ -253,7 +259,7 @@ export class CallService {
       });
     }
 
-    // TODO(Iteration 9): enqueue the ring-timeout job (jobId: callId).
+    await this.scheduleRingTimeout(call._id.toString());
 
     this.logger.log(
       `Call ${call._id} ringing: ${callerId} -> ${calleeId} (${callType}, ${streamCallId})`,
@@ -308,8 +314,6 @@ export class CallService {
       { actorId },
     );
 
-    // TODO(Iteration 9): remove the pending ring-timeout job on accept/reject/cancel.
-
     return this.toSummary(updated);
   }
 
@@ -322,7 +326,14 @@ export class CallService {
   async applyTransition(
     callId: Types.ObjectId | string,
     next: CallStatus,
-    opts: { actorId?: string | null; reason?: CallEndReason } = {},
+    opts: {
+      actorId?: string | null;
+      reason?: CallEndReason;
+      /** Cap the recorded duration — for orphaned calls closed by the sweeper. */
+      maxDurationSeconds?: number;
+      /** Set by the ring-timeout job itself, which must not try to remove its own job. */
+      fromRingTimeout?: boolean;
+    } = {},
   ): Promise<TransitionResult> {
     for (let attempt = 0; attempt < TRANSITION_ATTEMPTS; attempt++) {
       const current = await this.callModel.findById(callId).lean<Call>();
@@ -358,9 +369,13 @@ export class CallService {
 
       if (isTerminalStatus(next)) {
         set.endedAt = now;
-        set.durationSeconds = current.answeredAt
+        const duration = current.answeredAt
           ? Math.max(0, Math.round((now.getTime() - new Date(current.answeredAt).getTime()) / 1000))
           : 0;
+        set.durationSeconds =
+          opts.maxDurationSeconds !== undefined
+            ? Math.min(duration, opts.maxDurationSeconds)
+            : duration;
         set.endedReason = opts.reason ?? DEFAULT_END_REASON[next];
         if (opts.actorId) set.endedBy = new Types.ObjectId(opts.actorId);
       }
@@ -380,6 +395,10 @@ export class CallService {
             (set.endedReason ? ` reason=${set.endedReason}` : '') +
             (isTerminalStatus(next) ? ` duration=${set.durationSeconds}s` : ''),
         );
+        // Left ringing by any route (app, webhook, block): the timeout is moot.
+        if (current.status === CallStatus.Ringing && !opts.fromRingTimeout) {
+          void this.cancelRingTimeout(String(updated._id));
+        }
         return { call: updated, changed: true };
       }
       // Someone else moved it between our read and write — re-evaluate.
@@ -431,6 +450,81 @@ export class CallService {
       }
     }
     return terminated;
+  }
+
+  /**
+   * A ringing call nobody answered becomes missed, and Stream is told to end
+   * it so the callee's device stops ringing. Used by the ring-timeout job and
+   * the sweeper. Safe against the race with a last-second answer: the status
+   * is re-read, and the transition is atomic — an answered call is untouched.
+   * Returns whether this call did the expiring.
+   */
+  async expireRingingCall(
+    callId: string | Types.ObjectId,
+    opts: { fromRingTimeout?: boolean } = {},
+  ): Promise<boolean> {
+    const call = await this.callModel
+      .findById(callId)
+      .select('_id status streamCallId')
+      .lean<Call>();
+    if (!call || call.status !== CallStatus.Ringing) return false;
+
+    let changed: boolean;
+    try {
+      ({ changed } = await this.applyTransition(call._id, CallStatus.Missed, {
+        actorId: null,
+        reason: CallEndReason.RingTimeout,
+        fromRingTimeout: opts.fromRingTimeout,
+      }));
+    } catch (err) {
+      if (err instanceof ConflictException) return false; // answered at the boundary
+      throw err;
+    }
+    if (!changed) return false;
+
+    try {
+      await this.streamVideo.endCall(call.streamCallId);
+    } catch (err) {
+      this.logger.error(`Could not stop ringing for ${call._id}: ${(err as Error).message}`);
+    }
+
+    // TODO(Iteration 10): missed-call notification to the callee.
+    return true;
+  }
+
+  /**
+   * Enqueue the ring timeout. Failure is logged loudly but never fails the
+   * call: the sweeper resolves anything whose job was never enqueued.
+   */
+  private async scheduleRingTimeout(callId: string): Promise<void> {
+    try {
+      await this.callQueue.add(
+        CallJobs.RingTimeout,
+        { callId },
+        {
+          jobId: callId,
+          delay: ENV.CALL_RING_TIMEOUT_SECONDS * 1000,
+          attempts: 3,
+          backoff: { type: 'fixed', delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+    } catch (err) {
+      this.logger.error(
+        `Ring timeout NOT scheduled for call ${callId} — the sweeper will resolve it: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** Best-effort. If it fails, the job's own status re-check makes it a no-op. */
+  private async cancelRingTimeout(callId: string): Promise<void> {
+    try {
+      const job = await this.callQueue.getJob(callId);
+      await job?.remove();
+    } catch (err) {
+      this.logger.debug(`Ring timeout job for ${callId} not removed: ${(err as Error).message}`);
+    }
   }
 
   private async findCallOrThrow(callId: string): Promise<Call> {

@@ -30,7 +30,11 @@ class FakeCallModel {
 
   findById(id: any) {
     const doc = this.docs.get(String(id));
-    return { lean: async () => (doc ? clone(doc) : null) };
+    const query = {
+      select: () => query,
+      lean: async () => (doc ? clone(doc) : null),
+    };
+    return query;
   }
 
   findOneAndUpdate(filter: any, update: any) {
@@ -64,6 +68,8 @@ class FakeCallModel {
 describe('Call lifecycle', () => {
   let model: FakeCallModel;
   let streamVideo: { endCall: jest.Mock };
+  let queue: { getJob: jest.Mock };
+  let job: { remove: jest.Mock };
   let service: CallService;
   let caller: any;
   let callee: any;
@@ -87,6 +93,8 @@ describe('Call lifecycle', () => {
   beforeEach(() => {
     model = new FakeCallModel();
     streamVideo = { endCall: jest.fn().mockResolvedValue(undefined) };
+    job = { remove: jest.fn().mockResolvedValue(undefined) };
+    queue = { getJob: jest.fn().mockResolvedValue(job) };
     service = new CallService(
       model as any,
       {} as any,
@@ -94,6 +102,7 @@ describe('Call lifecycle', () => {
       streamVideo as any,
       {} as any,
       {} as any,
+      queue as any,
     );
     caller = user();
     callee = user();
@@ -288,6 +297,101 @@ describe('Call lifecycle', () => {
         service.terminateBetween(String(caller._id), String(callee._id)),
       ).resolves.toBe(0);
       expect(streamVideo.endCall).not.toHaveBeenCalled();
+    });
+  });
+  describe('ring timeout (Iteration 9)', () => {
+    it('leaving ringing by any route removes the pending timeout job', async () => {
+      const call = newCall();
+
+      await act(callee, call, 'accept');
+      await new Promise((r) => setImmediate(r)); // removal is fire-and-forget
+
+      expect(queue.getJob).toHaveBeenCalledWith(String(call._id));
+      expect(job.remove).toHaveBeenCalled();
+    });
+
+    it('the webhook / block path removes it too (it lives in applyTransition)', async () => {
+      const call = newCall();
+
+      await service.applyTransition(call._id, CallStatus.Cancelled, { reason: CallEndReason.Blocked });
+      await new Promise((r) => setImmediate(r));
+
+      expect(job.remove).toHaveBeenCalled();
+    });
+
+    it('transitions out of active do not touch the queue', async () => {
+      const call = newCall({ status: CallStatus.Active, answeredAt: new Date() });
+
+      await act(caller, call, 'end');
+      await new Promise((r) => setImmediate(r));
+
+      expect(queue.getJob).not.toHaveBeenCalled();
+    });
+
+    it('a failed job removal is harmless', async () => {
+      job.remove.mockRejectedValue(new Error('job is locked'));
+
+      await expect(act(callee, newCall(), 'accept')).resolves.toMatchObject({ status: CallStatus.Active });
+    });
+
+    it('1. an unanswered call becomes missed and stops ringing on Stream', async () => {
+      const call = newCall();
+
+      await expect(service.expireRingingCall(call._id, { fromRingTimeout: true })).resolves.toBe(true);
+
+      expect(model.docs.get(String(call._id))).toMatchObject({
+        status: CallStatus.Missed,
+        endedReason: CallEndReason.RingTimeout,
+        durationSeconds: 0,
+      });
+      expect(streamVideo.endCall).toHaveBeenCalledWith(call.streamCallId);
+      // The running job must not try to remove itself.
+      expect(queue.getJob).not.toHaveBeenCalled();
+    });
+
+    it('2. an answered call is left alone', async () => {
+      const call = newCall({ status: CallStatus.Active, answeredAt: new Date() });
+
+      await expect(service.expireRingingCall(call._id)).resolves.toBe(false);
+      expect(model.docs.get(String(call._id)).status).toBe(CallStatus.Active);
+      expect(streamVideo.endCall).not.toHaveBeenCalled();
+    });
+
+    it('race: answered between the timeout reading and writing — the answer wins, no false missed', async () => {
+      const call = newCall();
+      model.beforeWrite = (id) => {
+        model.beforeWrite = null;
+        const doc = model.docs.get(id);
+        doc.status = CallStatus.Active;
+        doc.answeredAt = new Date();
+      };
+
+      await expect(service.expireRingingCall(call._id)).resolves.toBe(false);
+      expect(model.docs.get(String(call._id)).status).toBe(CallStatus.Active);
+      expect(streamVideo.endCall).not.toHaveBeenCalled();
+    });
+
+    it('still records missed when Stream cannot be told to stop ringing', async () => {
+      streamVideo.endCall.mockRejectedValue(new Error('Stream down'));
+      const call = newCall();
+
+      await expect(service.expireRingingCall(call._id)).resolves.toBe(true);
+      expect(model.docs.get(String(call._id)).status).toBe(CallStatus.Missed);
+    });
+
+    it('a deleted or unknown call is a no-op', async () => {
+      await expect(service.expireRingingCall(new Types.ObjectId())).resolves.toBe(false);
+    });
+
+    it('maxDurationSeconds caps the recorded duration', async () => {
+      const call = newCall({
+        status: CallStatus.Active,
+        answeredAt: new Date(Date.now() - 8 * 3600_000),
+      });
+
+      await service.applyTransition(call._id, CallStatus.Ended, { maxDurationSeconds: 6 * 3600 });
+
+      expect(model.docs.get(String(call._id)).durationSeconds).toBe(6 * 3600);
     });
   });
 });

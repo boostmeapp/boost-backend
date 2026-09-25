@@ -150,6 +150,12 @@ export class ENV {
     return raw !== 'false' && raw !== '0';
   }
 
+  /** How long a call rings before it becomes missed. Long enough to reach a phone in a pocket. */
+  static get CALL_RING_TIMEOUT_SECONDS(): number {
+    const n = Number(configService.get<string>('CALL_RING_TIMEOUT_SECONDS', '45'));
+    return Number.isFinite(n) && n > 0 ? n : 45;
+  }
+
   static get STREAM_FIREBASE_PROVIDER(): string {
     return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
   }

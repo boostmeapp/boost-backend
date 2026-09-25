@@ -89,6 +89,24 @@ export enum ApnsEnvironment {
   Production = 'production',
 }
 
+export const CALL_QUEUE = 'call';
+
+export enum CallJobs {
+  /** Delayed by the ring timeout; jobId is the call id, so it is deduped and cancellable. */
+  RingTimeout = 'ring-timeout',
+}
+
+export interface RingTimeoutJob {
+  callId: string;
+}
+
+/** Sweeper: a ringing call older than the timeout plus this is stuck. */
+export const SWEEP_RINGING_GRACE_SECONDS = 60;
+/** Sweeper: an active call answered longer ago than this is orphaned. Its duration is capped here. */
+export const SWEEP_ACTIVE_MAX_SECONDS = 6 * 60 * 60;
+/** Single-flight lock across API replicas. Shorter than the 5-minute interval. */
+export const SWEEP_LOCK_TTL_SECONDS = 4 * 60;
+
 /** Stream call type. `default` has ringing enabled — verified in the dashboard. */
 export const STREAM_CALL_TYPE = 'default';
 
