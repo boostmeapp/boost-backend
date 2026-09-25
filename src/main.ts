@@ -10,6 +10,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { AppModule } from './app.module';
 import { ENV } from './config';
+import { LinksService } from './modules/links/links.service';
 import { AllExceptionsFilter } from './common/filters';
 import { LoggingInterceptor } from './common/interceptors';
 
@@ -76,6 +77,15 @@ async function bootstrap() {
   app.use(require('express').json({ limit: '10mb' }));
   app.use(require('express').urlencoded({ limit: '10mb', extended: true }));
 
+  // The page a shared link lands on. Registered as middleware, ahead of Nest's
+  // router: excluding 'videos/:id' from the global prefix would also strip the
+  // prefix from the real API's videos routes and 404 them.
+  const links = app.get(LinksService);
+  app.use('/videos/:id', (req: any, res: any, next: any) => {
+    if (req.method !== 'GET') return next();
+    return links.renderVideoPage(String(req.params.id), res);
+  });
+
   app.setGlobalPrefix(ENV.API_PREFIX, {
     // Apple and Google only fetch the link files from the domain root, and a
     // shared link has no /api in it either.
@@ -83,7 +93,6 @@ async function bootstrap() {
       'reset-password',
       '.well-known/apple-app-site-association',
       '.well-known/assetlinks.json',
-      'videos/:id',
     ],
   });
 
