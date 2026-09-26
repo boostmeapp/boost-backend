@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Patch,
   HttpCode,
   HttpStatus,
@@ -21,6 +22,7 @@ import { User } from '../../database/schemas/user/user.schema';
 import { CallService } from './call.service';
 import { InitiateCallDto } from './dto/initiate-call.dto';
 import { IssueTokenDto } from './dto/issue-token.dto';
+import { ClaimCallingDeviceDto } from './dto/claim-device.dto';
 
 @Controller('calls')
 @UseGuards(JwtAuthGuard)
@@ -34,6 +36,21 @@ export class CallController {
   @HttpCode(HttpStatus.OK)
   token(@CurrentUser() user: User, @Body() dto: IssueTokenDto) {
     return this.callService.issueToken(user, dto.apnsEnvironment);
+  }
+
+  /**
+   * "This install is where I take calls" — sent by the app whenever the user
+   * opens it. Only the claimed device rings and may call.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('device')
+  @HttpCode(HttpStatus.OK)
+  claimDevice(
+    @CurrentUser() user: User,
+    @Headers('x-device-id') deviceId: string | undefined,
+    @Body() dto: ClaimCallingDeviceDto,
+  ) {
+    return this.callService.claimDevice(user, deviceId, dto);
   }
 
   @Get()
@@ -88,8 +105,12 @@ export class CallController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  initiate(@CurrentUser() user: User, @Body() dto: InitiateCallDto) {
-    return this.callService.initiate(user, dto);
+  initiate(
+    @CurrentUser() user: User,
+    @Body() dto: InitiateCallDto,
+    @Headers('x-device-id') deviceId: string | undefined,
+  ) {
+    return this.callService.initiate(user, dto, deviceId);
   }
 
   // Lifecycle reports. The client acts through the Stream SDK first (that is
@@ -97,8 +118,12 @@ export class CallController {
 
   @Post(':id/accept')
   @HttpCode(HttpStatus.OK)
-  accept(@CurrentUser() user: User, @Param('id') id: string) {
-    return this.callService.performAction(user, id, 'accept');
+  accept(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Headers('x-device-id') deviceId: string | undefined,
+  ) {
+    return this.callService.performAction(user, id, 'accept', deviceId);
   }
 
   @Post(':id/reject')

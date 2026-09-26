@@ -43,7 +43,13 @@ export interface StreamStatus {
 
 /** Health endpoints are public and unthrottled; don't let them hammer Stream's API. */
 const PROBE_CACHE_MS = 30_000;
-const REQUEST_TIMEOUT_MS = 5_000;
+/**
+ * Creating a ringing call routinely takes 5–8s end to end (it fans out
+ * pushes). A timeout doesn't cancel the request on Stream's side — the call
+ * still gets created and rings — so a tight limit here turns a slow success
+ * into a "failed" call that rings anyway.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Thin wrapper over the Stream server SDK. Holds the single StreamClient for the
@@ -219,6 +225,36 @@ export class StreamVideoService implements OnModuleInit {
           custom: args.custom,
         },
       });
+  }
+
+  /**
+   * Make `keep` the user's only push devices on Stream, so a ring reaches one
+   * install. Registers `keep` (the app's SDK caches what it already sent and
+   * won't re-send a token we removed earlier), then deletes everything else.
+   * Returns how many were removed.
+   */
+  async setOnlyPushDevices(
+    userId: string,
+    keep: { id: string; provider: 'firebase' | 'apn'; providerName: string; voip?: boolean }[],
+  ): Promise<number> {
+    const client = this.getClient();
+    for (const d of keep) {
+      await client.createDevice({
+        id: d.id,
+        push_provider: d.provider,
+        push_provider_name: d.providerName,
+        voip_token: d.voip || undefined,
+        user_id: userId,
+      });
+    }
+
+    const keepIds = new Set(keep.map((d) => d.id));
+    const devices = (await client.listDevices({ user_id: userId })).devices ?? [];
+    const stale = devices.filter((d) => !keepIds.has(d.id));
+    for (const d of stale) {
+      await client.deleteDevice({ id: d.id, user_id: userId });
+    }
+    return stale.length;
   }
 
   /**

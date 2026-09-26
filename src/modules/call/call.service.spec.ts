@@ -85,6 +85,8 @@ describe('CallService', () => {
       upsertUsers: jest.fn().mockResolvedValue(undefined),
       generateUserToken: jest.fn().mockReturnValue('signed-token'),
       createRingingCall: jest.fn().mockResolvedValue(undefined),
+      endCall: jest.fn().mockResolvedValue(undefined),
+      setOnlyPushDevices: jest.fn().mockResolvedValue(0),
     };
     callAuthorization = { assertCanCall: jest.fn().mockResolvedValue(undefined) };
     callModel = {
@@ -203,6 +205,99 @@ describe('CallService', () => {
     });
   });
 
+  describe('one calling device per user', () => {
+    const tokens = [{ token: 'fcm-token-abc', provider: 'firebase' as const }];
+
+    it('claim records the device and makes its push tokens the only ones on Stream', async () => {
+      const user = makeUser();
+
+      const res = await service.claimDevice(user, 'device-B', { pushTokens: tokens });
+
+      expect(res.callingDeviceId).toBe('device-B');
+      expect(userModel.updateOne).toHaveBeenCalledWith(
+        { _id: user._id },
+        expect.objectContaining({ callingDeviceId: 'device-B', callingDeviceClaimedAt: expect.any(Date) }),
+      );
+      expect(streamVideo.setOnlyPushDevices).toHaveBeenCalledWith(user._id.toString(), [
+        { id: 'fcm-token-abc', provider: 'firebase', providerName: expect.any(String), voip: false },
+      ]);
+    });
+
+    it('an iOS VoIP token uses the APNs provider for the build environment', async () => {
+      const user = makeUser();
+
+      await service.claimDevice(user, 'device-B', {
+        apnsEnvironment: ApnsEnvironment.Development,
+        pushTokens: [{ token: 'voip-token-xyz', provider: 'apn', voip: true }],
+      });
+
+      expect(streamVideo.setOnlyPushDevices.mock.calls[0][1]).toEqual([
+        { id: 'voip-token-xyz', provider: 'apn', providerName: ENV.STREAM_APN_PROVIDER_SANDBOX, voip: true },
+      ]);
+    });
+
+    it('claim needs the X-Device-Id header', async () => {
+      const err = await service.claimDevice(makeUser(), undefined, { pushTokens: tokens }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse().code).toBe(CallErrorCode.DeviceIdRequired);
+      expect(userModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('a Stream failure does not undo the claim', async () => {
+      streamVideo.setOnlyPushDevices.mockRejectedValue(new Error('Stream down'));
+
+      const res = await service.claimDevice(makeUser(), 'device-B', { pushTokens: tokens });
+
+      expect(res).toEqual({ callingDeviceId: 'device-B', pushDevicesRemoved: null });
+      expect(userModel.updateOne).toHaveBeenCalled();
+    });
+
+    it('calling from another of the same user\'s devices → 409 CALLING_ON_OTHER_DEVICE, nothing rings', async () => {
+      const caller = makeUser({ callingDeviceId: 'device-A' });
+
+      const err = await service
+        .initiate(caller, { calleeId: oid().toString(), callType: CallType.Audio }, 'device-B')
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe(CallErrorCode.CallingOnOtherDevice);
+      expect(callModel.create).not.toHaveBeenCalled();
+      expect(streamVideo.createRingingCall).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['from the calling device', 'device-A', 'device-A'],
+      ['with no calling device claimed yet', undefined, 'device-B'],
+      ['from an older build that sends no device id', 'device-A', undefined],
+    ])('calling is allowed %s', async (_label, claimed, sent) => {
+      const caller = makeUser({ callingDeviceId: claimed });
+
+      await expect(
+        service.initiate(caller, { calleeId: oid().toString(), callType: CallType.Audio }, sent),
+      ).resolves.toMatchObject({ callType: CallType.Audio });
+    });
+
+    it("the ring names the callee's calling device, so their other devices ignore it", async () => {
+      userModel.findById.mockImplementation((id: string) => ({
+        select: () => ({
+          lean: async () =>
+            makeUser({ _id: new Types.ObjectId(id), username: 'bob', callingCapableAt: new Date(), callingDeviceId: 'bobs-phone' }),
+        }),
+      }));
+
+      await service.initiate(makeUser(), { calleeId: oid().toString(), callType: CallType.Audio });
+
+      expect(streamVideo.createRingingCall.mock.calls[0][0].custom.ringDeviceId).toBe('bobs-phone');
+    });
+
+    it('no ring target when the callee has not claimed a device (every device rings, as before)', async () => {
+      await service.initiate(makeUser(), { calleeId: oid().toString(), callType: CallType.Audio });
+
+      expect(streamVideo.createRingingCall.mock.calls[0][0].custom).not.toHaveProperty('ringDeviceId');
+    });
+  });
+
   describe('initiate', () => {
     const calleeId = () => oid().toString();
 
@@ -262,6 +357,26 @@ describe('CallService', () => {
         .catch(() => undefined);
 
       expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    it('a timed-out creation ends the call on Stream, so a ring that got through stops', async () => {
+      streamVideo.createRingingCall.mockRejectedValue(new Error('The request was aborted due to the 5000ms timeout'));
+
+      await expect(
+        service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio }),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+
+      const [created] = callModel.create.mock.calls[0];
+      expect(streamVideo.endCall).toHaveBeenCalledWith(created.streamCallId);
+    });
+
+    it('still reports the failure when Stream cannot be told to end it', async () => {
+      streamVideo.createRingingCall.mockRejectedValue(new Error('timeout'));
+      streamVideo.endCall.mockRejectedValue(new Error('Stream down'));
+
+      await expect(
+        service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio }),
+      ).rejects.toBeInstanceOf(BadGatewayException);
     });
 
     it('persists before calling Stream', async () => {

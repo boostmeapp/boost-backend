@@ -218,6 +218,81 @@ describe('Call lifecycle', () => {
     expect(err.getResponse().code).toBe(CallErrorCode.CallAlreadyEnded);
   });
 
+  it('accepting a call the caller just cancelled → 409 CALL_ALREADY_ENDED', async () => {
+    const call = newCall();
+    await act(caller, call, 'cancel');
+
+    const err = await failure(act(callee, call, 'accept'));
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(CallErrorCode.CallAlreadyEnded);
+  });
+
+  describe('calling device', () => {
+    it('accepting on a device that is not the calling device → 409 CALLING_ON_OTHER_DEVICE', async () => {
+      const call = newCall();
+      const onPhone = { ...callee, callingDeviceId: 'phone' };
+
+      const err = await failure(service.performAction(onPhone, String(call._id), 'accept', 'tablet'));
+
+      expect(err.getResponse().code).toBe(CallErrorCode.CallingOnOtherDevice);
+      expect(model.docs.get(String(call._id)).status).toBe(CallStatus.Ringing);
+    });
+
+    it('accepting on the calling device works', async () => {
+      const onPhone = { ...callee, callingDeviceId: 'phone' };
+
+      const res = await service.performAction(onPhone, String(newCall()._id), 'accept', 'phone');
+
+      expect(res.status).toBe(CallStatus.Active);
+    });
+
+    it('declining works from any device, so a ring can always be stopped', async () => {
+      const onPhone = { ...callee, callingDeviceId: 'phone' };
+
+      const res = await service.performAction(onPhone, String(newCall()._id), 'reject', 'tablet');
+
+      expect(res.status).toBe(CallStatus.Rejected);
+    });
+  });
+
+  describe('stopping the ring on Stream', () => {
+    it.each([
+      ['cancel', () => caller],
+      ['reject', () => callee],
+    ])('%s ends the Stream call, so every device stops ringing', async (action, who) => {
+      const call = newCall();
+
+      await act(who(), call, action);
+
+      expect(streamVideo.endCall).toHaveBeenCalledWith(call.streamCallId);
+    });
+
+    it('a repeated cancel (no state change) does not end it again', async () => {
+      const call = newCall();
+      await act(caller, call, 'cancel');
+      streamVideo.endCall.mockClear();
+
+      await act(caller, call, 'cancel');
+
+      expect(streamVideo.endCall).not.toHaveBeenCalled();
+    });
+
+    it('accept leaves the Stream call running', async () => {
+      await act(callee, newCall(), 'accept');
+
+      expect(streamVideo.endCall).not.toHaveBeenCalled();
+    });
+
+    it('a Stream failure never fails the cancel', async () => {
+      streamVideo.endCall.mockRejectedValue(new Error('Stream down'));
+
+      const res = await act(caller, newCall(), 'cancel');
+
+      expect(res.status).toBe(CallStatus.Cancelled);
+    });
+  });
+
   it('ending a still-ringing call is illegal (the caller must cancel, the callee reject)', async () => {
     const err = await failure(act(caller, newCall(), 'end'));
 

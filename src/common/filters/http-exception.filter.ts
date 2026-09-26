@@ -46,10 +46,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
       ...(code && { code }),
     };
 
-    this.logger.error(
-      `${request.method} ${request.url}`,
-      exception instanceof Error ? exception.stack : 'Unknown error',
-    );
+    // 4xx is the client's problem and often expected (e.g. accepting a call
+    // the caller just cancelled → 409): one warn line, no stack. Only 5xx is
+    // a server fault worth an error with its stack.
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(
+        `${request.method} ${request.url}`,
+        exception instanceof Error ? exception.stack : 'Unknown error',
+      );
+    } else {
+      this.logger.warn(
+        `${request.method} ${request.url} ${status}${code ? ` ${code}` : ''}: ${errorResponse.message}`,
+      );
+    }
 
     response.status(status).json(errorResponse);
   }

@@ -28,6 +28,7 @@ import { AdminCallQueryDto } from './dto/admin-call-query.dto';
 import { CallHistoryQueryDto } from './dto/call-history-query.dto';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { InitiateCallDto } from './dto/initiate-call.dto';
+import { ClaimCallingDeviceDto } from './dto/claim-device.dto';
 import { ENV } from '../../config';
 import {
   ApnsEnvironment,
@@ -219,13 +220,86 @@ export class CallService {
   }
 
   /**
+   * Make this install the user's calling device: the only one that rings and
+   * may place calls. The app claims whenever the user opens it, so calling
+   * follows the device used most recently. Other devices' push registrations
+   * are removed from Stream; a Stream failure doesn't undo the claim (the
+   * app's next claim retries it).
+   */
+  async claimDevice(
+    user: User,
+    deviceId: string | undefined,
+    dto: ClaimCallingDeviceDto,
+  ): Promise<{ callingDeviceId: string; pushDevicesRemoved: number | null }> {
+    this.assertCallingOpenFor(user);
+    if (!deviceId) {
+      throw new BadRequestException({
+        message: 'X-Device-Id header is required',
+        code: CallErrorCode.DeviceIdRequired,
+      });
+    }
+    const userId = user._id.toString();
+
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { callingDeviceId: deviceId, callingDeviceClaimedAt: new Date() },
+    );
+
+    const apnProviderName =
+      dto.apnsEnvironment === ApnsEnvironment.Development
+        ? ENV.STREAM_APN_PROVIDER_SANDBOX
+        : ENV.STREAM_APN_PROVIDER_PRODUCTION;
+    let pushDevicesRemoved: number | null = null;
+    try {
+      pushDevicesRemoved = await this.streamVideo.setOnlyPushDevices(
+        userId,
+        (dto.pushTokens ?? []).map((t) => ({
+          id: t.token,
+          provider: t.provider,
+          providerName: t.provider === 'apn' ? apnProviderName : ENV.STREAM_FIREBASE_PROVIDER,
+          voip: t.provider === 'apn' && t.voip,
+        })),
+      );
+    } catch (err) {
+      this.logger.warn(`Stream push devices not synced for ${userId}: ${(err as Error).message}`);
+    }
+
+    if (user.callingDeviceId !== deviceId) {
+      this.logger.log(
+        `Calling device for ${userId} moved to ${deviceId}` +
+          (pushDevicesRemoved ? ` (${pushDevicesRemoved} other push device(s) removed)` : ''),
+      );
+    }
+    return { callingDeviceId: deviceId, pushDevicesRemoved };
+  }
+
+  /**
+   * Another of this user's devices holds calling. Only enforced when both the
+   * user has a calling device and the request names its device — older app
+   * builds send no device id and keep working.
+   */
+  private assertCallingDevice(user: User, deviceId: string | undefined): void {
+    if (user.callingDeviceId && deviceId && user.callingDeviceId !== deviceId) {
+      throw new ConflictException({
+        message: 'Calls are set up on your other device.',
+        code: CallErrorCode.CallingOnOtherDevice,
+      });
+    }
+  }
+
+  /**
    * Start a ringing call: authorize, reserve both parties, persist, then ring
    * on Stream. The record is written *before* Stream so a failure leaves a
    * `failed` record, never a ringing phone with no record.
    */
-  async initiate(caller: User, dto: InitiateCallDto): Promise<InitiateCallResponse> {
+  async initiate(
+    caller: User,
+    dto: InitiateCallDto,
+    deviceId?: string,
+  ): Promise<InitiateCallResponse> {
     this.assertCallingOpenFor(caller);
     this.streamVideo.getClient(); // 503 when calling is unconfigured
+    this.assertCallingDevice(caller, deviceId);
 
     const callerId = caller._id.toString();
     const { calleeId, callType, conversationId } = dto;
@@ -243,7 +317,7 @@ export class CallService {
 
     const callee = await this.userModel
       .findById(calleeId)
-      .select('_id username firstName lastName profileImage')
+      .select('_id username firstName lastName profileImage callingDeviceId')
       .lean();
     // assertCanCall has just confirmed the callee exists; this guards the race.
     if (!callee) {
@@ -287,6 +361,9 @@ export class CallService {
           callId: call._id.toString(),
           callType,
           ...(conversationId && { conversationId }),
+          // Only this install of the callee shows the ring; their other
+          // signed-in devices (connected in-app) ignore it.
+          ...(callee.callingDeviceId && { ringDeviceId: callee.callingDeviceId }),
         },
       });
     } catch (err) {
@@ -301,6 +378,14 @@ export class CallService {
       this.logger.error(
         `Stream call creation failed for ${call._id} (${callerId} -> ${calleeId}): ${(err as Error).message}`,
       );
+      // A timeout or dropped response doesn't mean Stream didn't create it:
+      // the call may exist and be ringing the callee for a call the caller was
+      // told failed. End it — a no-op if it was never created.
+      this.streamVideo
+        .endCall(streamCallId)
+        .catch((endErr) =>
+          this.logger.warn(`Could not stop a possible ring for failed call ${call._id}: ${(endErr as Error).message}`),
+        );
       throw new BadGatewayException({
         message: 'Could not start the call. Please try again.',
         code: CallErrorCode.CallFailed,
@@ -395,8 +480,12 @@ export class CallService {
     user: User,
     callId: string,
     action: CallAction,
+    deviceId?: string,
   ): Promise<CallSummary> {
     const actorId = user._id.toString();
+    // Answering is tied to the calling device; hanging up / declining /
+    // cancelling works from anywhere, so a call can always be stopped.
+    if (action === 'accept') this.assertCallingDevice(user, deviceId);
     const call = await this.findCallOrThrow(callId);
 
     // The call id alone is not authorization.
@@ -419,11 +508,23 @@ export class CallService {
       });
     }
 
-    const { call: updated } = await this.applyTransition(
+    const { call: updated, changed } = await this.applyTransition(
       call._id,
       ACTION_TARGET[action],
       { actorId },
     );
+
+    // A ring stopped by cancel/reject: end it on Stream too, as the ring
+    // timeout does. Otherwise stopping the ring relies on the caller's own
+    // client reaching Stream, and a callee whose socket missed that event
+    // keeps ringing — and can "accept" a call that's already over.
+    if (changed && (action === 'cancel' || action === 'reject')) {
+      this.streamVideo
+        .endCall(call.streamCallId)
+        .catch((err) =>
+          this.logger.warn(`Could not stop ringing for ${call._id} on Stream: ${(err as Error).message}`),
+        );
+    }
 
     return this.toSummary(updated);
   }

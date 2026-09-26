@@ -56,6 +56,10 @@ export enum CallErrorCode {
   /** The callee's "Who can call me" is set to nobody. */
   CallsNotAccepted = 'CALLS_NOT_ACCEPTED',
   IllegalTransition = 'ILLEGAL_TRANSITION',
+  /** Calling belongs to another of this user's signed-in devices; claim it first (POST /calls/device). */
+  CallingOnOtherDevice = 'CALLING_ON_OTHER_DEVICE',
+  /** POST /calls/device without an X-Device-Id header. */
+  DeviceIdRequired = 'DEVICE_ID_REQUIRED',
 }
 
 /**
