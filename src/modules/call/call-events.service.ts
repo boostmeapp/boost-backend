@@ -10,7 +10,6 @@ import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/notification.constants';
 import { RedisService } from '../redis/redis.service';
 import { CallEndReason, CallStatus, CallType } from './call.constants';
-import { CallAbuseService } from './call-abuse.service';
 
 /** One missed-call notification per caller → callee in this window. */
 export const MISSED_CALL_NOTIFY_WINDOW_SECONDS = 15 * 60;
@@ -65,7 +64,6 @@ export class CallEventsService {
     private readonly chatGateway: ChatGateway,
     private readonly notificationService: NotificationService,
     private readonly redis: RedisService,
-    private readonly callAbuse: CallAbuseService,
   ) {}
 
   async onCallTerminated(call: Call): Promise<void> {
@@ -74,7 +72,6 @@ export class CallEventsService {
     if (!calleeId) return;
 
     await Promise.all([
-      this.recordRejection(call, initiatorId, calleeId),
       this.writeChatEvent(call, initiatorId, calleeId).catch((err) =>
         this.logger.error(`Call ${call._id}: chat event not written: ${err.message}`),
       ),
@@ -82,12 +79,6 @@ export class CallEventsService {
         this.logger.error(`Call ${call._id}: missed-call notification failed: ${err.message}`),
       ),
     ]);
-  }
-
-  /** Feeds the repeat-rejection backoff. Deliberate declines only — not busy, not timeouts. */
-  private async recordRejection(call: Call, initiatorId: string, calleeId: string) {
-    if (call.status !== CallStatus.Rejected || call.endedReason !== CallEndReason.Rejected) return;
-    await this.callAbuse.recordRejection(initiatorId, calleeId);
   }
 
   private async writeChatEvent(call: Call, initiatorId: string, calleeId: string) {

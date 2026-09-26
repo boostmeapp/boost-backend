@@ -106,7 +106,7 @@ describe('Call lifecycle', () => {
       {} as any,
       queue as any,
       callEvents as any,
-      { recordInitiation: jest.fn(), assertWithinRateLimit: jest.fn(), assertNotBackedOff: jest.fn() } as any,
+      { recordInitiation: jest.fn(), assertWithinRateLimit: jest.fn() } as any,
     );
     caller = user();
     callee = user();

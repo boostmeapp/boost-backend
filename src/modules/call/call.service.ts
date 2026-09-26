@@ -313,7 +313,6 @@ export class CallService {
     // All after authorization, so a blocked caller still sees only the generic answer.
     await this.assertCalleeCapable(calleeId);
     await this.callAbuse.assertWithinRateLimit(callerId);
-    await this.callAbuse.assertNotBackedOff(callerId, calleeId);
 
     const callee = await this.userModel
       .findById(calleeId)
@@ -950,7 +949,6 @@ export class CallService {
     try {
       await this.callAuthorization.assertCanCall(callerId, calleeId);
       await this.assertCalleeCapable(calleeId);
-      await this.callAbuse.assertNotBackedOff(callerId, calleeId);
       await this.assertNotBusy(callerId, calleeId);
       return { allowed: true };
     } catch (err) {

@@ -830,7 +830,7 @@ Make the feature safe to expose to real users and debuggable when it misbehaves.
    - Redis counter keyed `call:rate:<userId>` with a one-hour sliding window, capped at `CALL_MAX_PER_HOUR` (default 30).
    - Exceeded → `429 CALL_RATE_LIMITED`.
    - Enforce inside `CallService.initiate()`, not just as a controller decorator, so every initiation path is covered.
-2. **Repeat-rejection backoff** — a caller rejected 3 times by the same callee within an hour is blocked from calling that user for an hour. This is the highest-signal harassment pattern in 1:1 calling. Redis key `call:reject:<callerId>:<calleeId>`.
+2. ~~**Repeat-rejection backoff**~~ — **Removed (2026-09-26).** Declines no longer block the caller; blocking the user is the way to stop someone calling. Original design: a caller rejected 3 times by the same callee within an hour is blocked from calling that user for an hour. This is the highest-signal harassment pattern in 1:1 calling. Redis key `call:reject:<callerId>:<calleeId>`.
 3. **Moderation surface** — extend the admin module:
    - `GET /admin/calls` — filter by user, status, date range.
    - `POST /admin/calls/:id/terminate` — force-end a live call via `StreamVideoService.endCall()`.
@@ -853,7 +853,6 @@ Make the feature safe to expose to real users and debuggable when it misbehaves.
 ### API / event flow
 ```
 initiate() ──> rate window check   ──> 429 if exceeded
-          ──> reject-backoff check ──> 403 if backed off
           ──> [existing Iteration 5 flow]
 
 call end ──> POST /calls/:id/stats { mos, packetLoss, jitter } ──> validated, clamped, stored
@@ -881,7 +880,7 @@ call end ──> POST /calls/:id/stats { mos, packetLoss, jitter } ──> valid
 Calling is rate limited, moderatable, and instrumented well enough to diagnose problems from logs alone.
 
 ### Completion criteria
-- [ ] Rate limit and reject-backoff enforced and tested
+- [ ] Rate limit enforced and tested (reject-backoff removed)
 - [ ] Admin can list and terminate calls, and restrict a user's calling
 - [ ] Rate limiting fails open on Redis outage; the lock in Iteration 5 still fails closed
 - [ ] Every transition produces one structured log line

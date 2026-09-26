@@ -125,15 +125,6 @@ export const SWEEP_LOCK_TTL_SECONDS = 4 * 60;
 /** Rate-limit window for CALL_MAX_PER_HOUR. */
 export const CALL_RATE_WINDOW_SECONDS = 60 * 60;
 
-/**
- * Repeat-rejection backoff: this many deliberate rejections of the same caller
- * by the same callee within the window blocks that caller → callee pair for
- * the backoff period. The highest-signal harassment pattern in 1:1 calling.
- */
-export const REJECT_BACKOFF_THRESHOLD = 3;
-export const REJECT_WINDOW_SECONDS = 60 * 60;
-export const REJECT_BACKOFF_SECONDS = 60 * 60;
-
 /** Answer-rate alert needs at least this many answerable calls in the hour to mean anything. */
 export const ANSWER_RATE_ALERT_MIN_SAMPLE = 10;
 

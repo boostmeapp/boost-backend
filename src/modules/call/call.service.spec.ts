@@ -75,7 +75,6 @@ describe('CallService', () => {
     queue = { add: jest.fn().mockResolvedValue({}), getJob: jest.fn().mockResolvedValue(null) };
     callAbuse = {
       assertWithinRateLimit: jest.fn().mockResolvedValue(undefined),
-      assertNotBackedOff: jest.fn().mockResolvedValue(undefined),
       recordInitiation: jest.fn().mockResolvedValue(undefined),
     };
     streamVideo = {
@@ -629,11 +628,10 @@ describe('CallService', () => {
   describe('abuse controls in initiate (Iteration 11)', () => {
     const calleeId = () => oid().toString();
 
-    it('checks the rate limit and the backoff after authorization, before anything is created', async () => {
+    it('checks the rate limit after authorization, before anything is created', async () => {
       const order: string[] = [];
       callAuthorization.assertCanCall.mockImplementation(async () => order.push('authz'));
       callAbuse.assertWithinRateLimit.mockImplementation(async () => order.push('rate'));
-      callAbuse.assertNotBackedOff.mockImplementation(async () => order.push('backoff'));
       callModel.create.mockImplementation(async (doc: any) => {
         order.push('create');
         return { ...doc, _id: oid(), createdAt: new Date() };
@@ -641,7 +639,7 @@ describe('CallService', () => {
 
       await service.initiate(makeUser(), { calleeId: calleeId(), callType: CallType.Audio });
 
-      expect(order).toEqual(['authz', 'rate', 'backoff', 'create']);
+      expect(order).toEqual(['authz', 'rate', 'create']);
     });
 
     it('a rate-limited caller creates nothing', async () => {

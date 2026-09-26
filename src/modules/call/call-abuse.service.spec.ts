@@ -1,4 +1,4 @@
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 import { CallAbuseService } from './call-abuse.service';
 import { ENV } from '../../config';
 import { CallErrorCode } from './call.constants';
@@ -54,8 +54,6 @@ describe('CallAbuseService', () => {
   let service: CallAbuseService;
   let env: Record<string, string>;
   const A = 'caller-a';
-  const B = 'callee-b';
-  const C = 'callee-c';
   const minutes = (m: number) => (redis.now += m * 60_000);
 
   beforeAll(() => {
@@ -113,56 +111,6 @@ describe('CallAbuseService', () => {
 
       await expect(service.assertWithinRateLimit(A)).resolves.toBeUndefined();
       await expect(service.recordInitiation(A)).resolves.toBeUndefined();
-    });
-  });
-
-  describe('repeat-rejection backoff', () => {
-    it('2. three rejections by the same callee within an hour block that pair', async () => {
-      await service.recordRejection(A, B);
-      await service.recordRejection(A, B);
-      await expect(service.assertNotBackedOff(A, B)).resolves.toBeUndefined();
-
-      await service.recordRejection(A, B);
-
-      const err = await service.assertNotBackedOff(A, B).catch((e) => e);
-      expect(err).toBeInstanceOf(ForbiddenException);
-      // Answers like a block: a harasser learns nothing about the throttle.
-      expect(err.getResponse()).toEqual({
-        message: "This user can't be called right now",
-        code: CallErrorCode.UserUnavailable,
-      });
-    });
-
-    it('2b. the backoff expires after an hour', async () => {
-      for (let i = 0; i < 3; i++) await service.recordRejection(A, B);
-      minutes(59);
-      await expect(service.assertNotBackedOff(A, B)).rejects.toBeInstanceOf(ForbiddenException);
-
-      minutes(2);
-      await expect(service.assertNotBackedOff(A, B)).resolves.toBeUndefined();
-    });
-
-    it('only affects that pair — the caller can still call others', async () => {
-      for (let i = 0; i < 3; i++) await service.recordRejection(A, B);
-
-      await expect(service.assertNotBackedOff(A, C)).resolves.toBeUndefined();
-      await expect(service.assertNotBackedOff(B, A)).resolves.toBeUndefined();
-    });
-
-    it('rejections spread over more than an hour do not add up', async () => {
-      await service.recordRejection(A, B);
-      await service.recordRejection(A, B);
-      minutes(61);
-      await service.recordRejection(A, B);
-
-      await expect(service.assertNotBackedOff(A, B)).resolves.toBeUndefined();
-    });
-
-    it('fails OPEN when Redis is down', async () => {
-      redis.down = true;
-
-      await expect(service.recordRejection(A, B)).resolves.toBeUndefined();
-      await expect(service.assertNotBackedOff(A, B)).resolves.toBeUndefined();
     });
   });
 });

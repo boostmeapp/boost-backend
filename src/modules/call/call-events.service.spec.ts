@@ -39,7 +39,6 @@ describe('CallEventsService.onCallTerminated', () => {
   let chatGateway: { broadcastMessage: jest.Mock };
   let notificationService: { notify: jest.Mock };
   let redis: { setIfAbsent: jest.Mock };
-  let callAbuse: { recordRejection: jest.Mock };
   let service: CallEventsService;
 
   const call = (overrides: Record<string, unknown> = {}) =>
@@ -63,7 +62,6 @@ describe('CallEventsService.onCallTerminated', () => {
     chatGateway = { broadcastMessage: jest.fn() };
     notificationService = { notify: jest.fn().mockResolvedValue(['n1']) };
     redis = { setIfAbsent: jest.fn().mockResolvedValue(true) };
-    callAbuse = { recordRejection: jest.fn().mockResolvedValue(undefined) };
     const userModel = {
       findById: () => ({ select: () => ({ lean: async () => ({ username: 'alexandra' }) }) }),
     };
@@ -73,7 +71,6 @@ describe('CallEventsService.onCallTerminated', () => {
       chatGateway as any,
       notificationService as any,
       redis as any,
-      callAbuse as any,
     );
     jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
   });
@@ -195,26 +192,6 @@ describe('CallEventsService.onCallTerminated', () => {
       await service.onCallTerminated(call({ status: CallStatus.Missed, conversation: undefined }));
 
       expect(notificationService.notify.mock.calls[0][0].metadata).not.toHaveProperty('conversationId');
-    });
-  });
-
-  describe('repeat-rejection backoff feed (Iteration 11)', () => {
-    it('records a deliberate rejection against the caller → callee pair', async () => {
-      await service.onCallTerminated(
-        call({ status: CallStatus.Rejected, endedReason: CallEndReason.Rejected }),
-      );
-
-      expect(callAbuse.recordRejection).toHaveBeenCalledWith(String(initiator), String(callee));
-    });
-
-    it.each([
-      ['busy', { status: CallStatus.Rejected, endedReason: CallEndReason.CalleeBusy }],
-      ['missed', { status: CallStatus.Missed, endedReason: CallEndReason.RingTimeout }],
-      ['cancelled', { status: CallStatus.Cancelled, endedReason: CallEndReason.CancelledByCaller }],
-    ])('ignores %s', async (_, overrides) => {
-      await service.onCallTerminated(call(overrides));
-
-      expect(callAbuse.recordRejection).not.toHaveBeenCalled();
     });
   });
 });

@@ -134,7 +134,6 @@ If a device is missing, ringing with the app closed will fail. Fix this before t
 Work through the sections in order; later ones assume earlier ones pass. Tick each box, and write down the device, OS version and network for anything that fails.
 
 > **Watch out while testing**
-> - **Declining 3 times in an hour blocks that caller.** It is anti-harassment protection: after 3 deliberate declines from the same person, the caller's call button for them disappears for 1 hour. To reset, delete the Redis keys `call:reject:<callerId>:<calleeId>` and `call:backoff:<callerId>:<calleeId>`.
 > - **Repeat missed-call notifications are held back.** Missed-call notifications from the same caller are collapsed for 15 minutes. The call still shows in history.
 > - **The rating question only comes up sometimes.** The post-call sheet only asks for a rating on about 1 in 5 calls.
 
@@ -248,6 +247,5 @@ Common symptoms:
 
 ## 7. Resetting between runs
 - Call history: use **Clear call history** on each account.
-- The decline block: delete the `call:reject:*` and `call:backoff:*` Redis keys for the pair.
 - The "why we ask" permission sheet, and the Android reliability prompt: uninstall and reinstall the app. Both are remembered on the device.
 - Calling permissions: iOS Settings → Boostra; Android App info → Permissions.
