@@ -60,8 +60,8 @@ src/database/schemas/call/
 | `STREAM_API_KEY` | Iteration 1 | Public app key, also shipped to client |
 | `STREAM_API_SECRET` | Iteration 1 | Server-only; signs user tokens, verifies webhooks |
 | `STREAM_APP_ID` | Iteration 1 | Dashboard reference / logging |
-| `STREAM_APN_PROVIDER_SANDBOX` | Iteration 6 | Stream APNs provider name for development builds (default `boostra-voip-sandbox`) |
-| `STREAM_APN_PROVIDER_PRODUCTION` | Iteration 6 | Stream APNs provider name for staging/TestFlight/store builds (default `boostra-voip-production`) |
+| `STREAM_APN_PROVIDER_SANDBOX` | Iteration 6 | Stream APNs provider name for development builds (default `boostra-voip-dev`) |
+| `STREAM_APN_PROVIDER_PRODUCTION` | Iteration 6 | Stream APNs provider name for staging/TestFlight/store builds (default `boostra-voip-prod`) |
 | `STREAM_FIREBASE_PROVIDER` | Iteration 6 | Stream Firebase provider name (default `boostra-android`) |
 | `STREAM_WEBHOOK_ENABLED` | Iteration 8 | Kill switch for webhook ingestion |
 | `CALL_RING_TIMEOUT_SECONDS` | Iteration 9 | Default `45` |
@@ -449,7 +449,7 @@ Configure the push providers in Stream so an incoming call reaches a device whos
    - Note the exact provider *names*; the client passes them when registering device tokens.
 2. Expose the provider names to the client. Add them to the `POST /calls/token` response:
    ```json
-   { "apiKey": "...", "token": "...", "push": { "apnsEnvironment": "production", "apnProviderName": "boostra-voip-production", "firebaseProviderName": "boostra-android" } }
+   { "apiKey": "...", "token": "...", "push": { "apnsEnvironment": "production", "apnProviderName": "boostra-voip-prod", "firebaseProviderName": "boostra-android" } }
    ```
    This keeps environment-specific names out of the app bundle — the same binary works against staging and production.
 3. **Select the APNs provider by the app build's APNs environment, not by `NODE_ENV`.** The app sends `{ apnsEnvironment: 'development' | 'production' }` in the `POST /calls/token` body (default `production`). This matters because staging builds use **production** APNs (`APNS_MODE` in `app.config.js`) but talk to the **dev** backend, so selecting by `ENV.IS_PRODUCTION` would hand them the sandbox provider and every push would be silently dropped. Provider names come from `STREAM_APN_PROVIDER_SANDBOX`, `STREAM_APN_PROVIDER_PRODUCTION` and `STREAM_FIREBASE_PROVIDER`.

@@ -142,7 +142,7 @@ describe('CallService', () => {
 
       expect(res.push).toEqual({
         apnsEnvironment: ApnsEnvironment.Production,
-        apnProviderName: 'boostra-voip-production',
+        apnProviderName: 'boostra-voip-prod',
         firebaseProviderName: 'boostra-android',
       });
     });
@@ -152,7 +152,7 @@ describe('CallService', () => {
 
       expect(res.push).toMatchObject({
         apnsEnvironment: ApnsEnvironment.Development,
-        apnProviderName: 'boostra-voip-sandbox',
+        apnProviderName: 'boostra-voip-dev',
       });
     });
 

@@ -10,15 +10,15 @@ If anything on this page is wrong, calls still ring when the app is open, but ne
 
 | Stream provider name (default) | Type | Used by | Env var to override the name |
 |---|---|---|---|
-| `boostra-voip-sandbox` | APNs, VoIP, **development** | iOS **development** builds | `STREAM_APN_PROVIDER_SANDBOX` |
-| `boostra-voip-production` | APNs, VoIP, **production** | iOS **staging, TestFlight, App Store** builds | `STREAM_APN_PROVIDER_PRODUCTION` |
+| `boostra-voip-dev` | APNs, VoIP, **development** | iOS **development** builds | `STREAM_APN_PROVIDER_SANDBOX` |
+| `boostra-voip-prod` | APNs, VoIP, **production** | iOS **staging, TestFlight, App Store** builds | `STREAM_APN_PROVIDER_PRODUCTION` |
 | `boostra-android` | Firebase | all Android builds | `STREAM_FIREBASE_PROVIDER` |
 
 **Why the APNs choice is per app build, not per backend:** `APNS_MODE` in `boostra-app/app.config.js` is `development` only for the development variant. Staging builds use **production** APNs but talk to the **dev** backend (`api-dev.boostra.me`). So the app sends `apnsEnvironment` in `POST /calls/token`, and the backend returns the matching provider name. `NODE_ENV` plays no part.
 
 **Which Stream app needs what:**
 - **Dev Stream app** (behind `api-dev`): all three. Development builds need the sandbox provider; staging and TestFlight builds need the production one.
-- **Production Stream app** (behind `prodapi`, created in backend Iteration 13): `boostra-voip-production` and `boostra-android`. Store builds never use sandbox.
+- **Production Stream app** (behind `prodapi`, created in backend Iteration 13): `boostra-voip-prod` and `boostra-android`. Store builds never use sandbox.
 
 Identifiers: iOS bundle ID **`com.boostra.mobile`**, Android package **`com.boostra.app`**. They differ; don't swap them.
 
@@ -42,7 +42,7 @@ In the [Stream dashboard](https://dashboard.getstream.io/) → your app → **Pu
 
 | Field | Sandbox provider | Production provider |
 |---|---|---|
-| Name | `boostra-voip-sandbox` | `boostra-voip-production` |
+| Name | `boostra-voip-dev` | `boostra-voip-prod` |
 | Auth type | Token (`.p8`) | Token (`.p8`) |
 | `.p8` key, Key ID, Team ID | from step 1 | from step 1 |
 | Topic / bundle ID | `com.boostra.mobile` | `com.boostra.mobile` |
@@ -78,11 +78,11 @@ GET /api/health/stream?check=true
 
 This needs the app side (frontend Iterations 9 and 10). Physical devices only; simulators can't receive VoIP pushes.
 
-1. Development build on an iPhone → the device token appears on the user in the Stream dashboard, against `boostra-voip-sandbox`.
+1. Development build on an iPhone → the device token appears on the user in the Stream dashboard, against `boostra-voip-dev`.
 2. Lock the phone and call it → it rings on the lock screen.
 3. Force-kill the app and call again → it still rings. **This is the definitive test.**
 4. Repeat on a physical Android device.
-5. Install a **staging build from TestFlight** → it registers against `boostra-voip-production` and rings when killed. This is where an environment mismatch shows up.
+5. Install a **staging build from TestFlight** → it registers against `boostra-voip-prod` and rings when killed. This is where an environment mismatch shows up.
 6. Use the dashboard's push-test tool to test each provider in isolation before suspecting app code.
 
 ---
@@ -90,7 +90,7 @@ This needs the app side (frontend Iterations 9 and 10). Physical devices only; s
 ## "Calls don't ring on locked phones" — check in this order
 
 1. `GET /api/health/stream?check=true` → every provider `ok`?
-2. **Environment match.** Development build ↔ `boostra-voip-sandbox`; staging/TestFlight/App Store ↔ `boostra-voip-production`. The app must send the right `apnsEnvironment`. A mismatch drops every push **without error**.
+2. **Environment match.** Development build ↔ `boostra-voip-dev`; staging/TestFlight/App Store ↔ `boostra-voip-prod`. The app must send the right `apnsEnvironment`. A mismatch drops every push **without error**.
 3. **Device token registered?** Stream dashboard → the user → devices. None → the app isn't registering (frontend Iterations 9/10).
 4. **Key still valid?** A revoked `.p8` key fails every push. Keys don't expire, but can be revoked in the Apple portal.
 5. **Bundle ID / topic** is `com.boostra.mobile`, not `com.boostra.app`.

@@ -32,8 +32,8 @@ describe('StreamVideoService push provider check', () => {
 
   it('reports ok when all three configured providers exist and are usable', async () => {
     withProviders([
-      provider({ name: 'boostra-voip-sandbox' }),
-      provider({ name: 'boostra-voip-production' }),
+      provider({ name: 'boostra-voip-dev' }),
+      provider({ name: 'boostra-voip-prod' }),
       provider({ name: 'boostra-android', type: 'firebase', apn_supports_voip_notifications: undefined }),
     ]);
 
@@ -41,16 +41,16 @@ describe('StreamVideoService push provider check', () => {
 
     expect(reachable).toBe(true);
     expect(push).toEqual({
-      apnSandbox: { name: 'boostra-voip-sandbox', state: 'ok' },
-      apnProduction: { name: 'boostra-voip-production', state: 'ok' },
+      apnSandbox: { name: 'boostra-voip-dev', state: 'ok' },
+      apnProduction: { name: 'boostra-voip-prod', state: 'ok' },
       firebase: { name: 'boostra-android', state: 'ok' },
     });
   });
 
   it('flags missing, disabled, and non-VoIP providers', async () => {
     withProviders([
-      provider({ name: 'boostra-voip-sandbox', apn_supports_voip_notifications: false }),
-      provider({ name: 'boostra-voip-production', disabled_at: new Date() }),
+      provider({ name: 'boostra-voip-dev', apn_supports_voip_notifications: false }),
+      provider({ name: 'boostra-voip-prod', disabled_at: new Date() }),
     ]);
 
     const { push } = await service.getStatus(true);

@@ -44,8 +44,8 @@ Follow [STREAM_DASHBOARD_SETUP.md](STREAM_DASHBOARD_SETUP.md) sections 1–5 in 
 
    | Name | Type | Used by |
    |---|---|---|
-   | `boostra-voip-sandbox` | APN, VoIP, **Development / Sandbox ON** | iOS **development** builds |
-   | `boostra-voip-production` | APN, VoIP, sandbox OFF | iOS staging / TestFlight / App Store builds |
+   | `boostra-voip-dev` | APN, VoIP, **Development / Sandbox ON** | iOS **development** builds |
+   | `boostra-voip-prod` | APN, VoIP, sandbox OFF | iOS staging / TestFlight / App Store builds |
    | `boostra-android` | Firebase (service-account JSON) | All Android builds |
 
 4. **Webhook.** A local backend needs a public URL:
@@ -60,8 +60,8 @@ STREAM_API_KEY=<dev app key>
 STREAM_API_SECRET=<dev app secret>
 STREAM_APP_ID=<dev app id>
 STREAM_PRODUCTION_APP_ID=<the PRODUCTION app's id>   # boot refuses to run a dev backend on the prod app
-STREAM_APN_PROVIDER_SANDBOX=boostra-voip-sandbox
-STREAM_APN_PROVIDER_PRODUCTION=boostra-voip-production
+STREAM_APN_PROVIDER_SANDBOX=boostra-voip-dev
+STREAM_APN_PROVIDER_PRODUCTION=boostra-voip-prod
 STREAM_FIREBASE_PROVIDER=boostra-android
 STREAM_WEBHOOK_ENABLED=true
 CALL_RING_TIMEOUT_SECONDS=45
@@ -97,7 +97,7 @@ Calling needs native code, so **Expo Go does not work**. Use development builds.
    or with EAS: `npm run build:dev:ios` / `npm run build:dev:android`, then install from the build page.
 3. Start Metro with `npm start` and open the app on both phones.
 
-**About iOS builds:** development builds register with `boostra-voip-sandbox`. To test the production push path (section 5.12), use a **staging / TestFlight** build, which registers with `boostra-voip-production`.
+**About iOS builds:** development builds register with `boostra-voip-dev`. To test the production push path (section 5.12), use a **staging / TestFlight** build, which registers with `boostra-voip-prod`.
 
 ---
 
@@ -122,7 +122,7 @@ Create three accounts. Real inboxes are needed, because the sign-up code is only
 
 ### Before you start: check both devices registered for ringing
 In the Stream dashboard → **Video → Users**:
-- A's user should list a device on `boostra-voip-sandbox`.
+- A's user should list a device on `boostra-voip-dev`.
 - B's user should list a device on `boostra-android`.
 
 If a device is missing, ringing with the app closed will fail. Fix this before testing.
@@ -225,7 +225,7 @@ Test each direction: A to B (Android rings) **and** B to A (iPhone rings).
 - [ ] After signing out, call that account → it does **not** ring on the signed-out phone.
 
 ### 5.12 Production push path (before a release)
-- [ ] Install a **staging / TestFlight** iOS build → in Stream, the device registers with `boostra-voip-production` → it rings when the app is closed.
+- [ ] Install a **staging / TestFlight** iOS build → in Stream, the device registers with `boostra-voip-prod` → it rings when the app is closed.
 
 ---
 
@@ -241,7 +241,7 @@ Test each direction: A to B (Android rings) **and** B to A (iPhone rings).
 | One call's record | `GET <api>/admin/calls/<callId>` |
 
 Common symptoms:
-- **iOS never rings when the app is closed, with no errors:** the build and push provider don't match. A development build must use `boostra-voip-sandbox`; a TestFlight build must use `boostra-voip-production`.
+- **iOS never rings when the app is closed, with no errors:** the build and push provider don't match. A development build must use `boostra-voip-dev`; a TestFlight build must use `boostra-voip-prod`.
 - **Android never rings when closed:** wrong Firebase JSON in `boostra-android`, the notification permission is off, or battery optimisation is killing the app. Set Boostra's battery use to **Unrestricted**.
 - **`503 CALLING_UNAVAILABLE`:** Stream keys missing, or Redis is down.
 - **A call button vanished for someone you can normally call:** probably the 3-decline block; see the note at the top of section 5.

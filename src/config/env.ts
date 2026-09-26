@@ -133,11 +133,11 @@ export class ENV {
   // per app build (sandbox for development builds, production for staging /
   // TestFlight / App Store) — not per backend environment.
   static get STREAM_APN_PROVIDER_SANDBOX(): string {
-    return configService.get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-sandbox').trim();
+    return configService.get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-dev').trim();
   }
 
   static get STREAM_APN_PROVIDER_PRODUCTION(): string {
-    return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-production').trim();
+    return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-prod').trim();
   }
 
   /**
