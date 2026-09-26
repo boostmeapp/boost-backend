@@ -148,6 +148,10 @@ export class CallEventsService {
       body: `Missed ${kind} from ${name}`,
       metadata: {
         callId: String(call._id),
+        // Lets the app dismiss a system call UI (Android Telecom / CallKit)
+        // still showing for this ring — e.g. "Connecting…" after an answer
+        // that never completed.
+        ...(call.streamCallId && { streamCallId: call.streamCallId }),
         callerId: initiatorId,
         callType: call.callType,
         ...(call.conversation && { conversationId: String(call.conversation) }),

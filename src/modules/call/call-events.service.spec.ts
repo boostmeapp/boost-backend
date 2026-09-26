@@ -48,6 +48,7 @@ describe('CallEventsService.onCallTerminated', () => {
       initiator,
       participants: [initiator, callee],
       conversation,
+      streamCallId: 'default:ring-abc',
       callType: CallType.Video,
       status: CallStatus.Ended,
       durationSeconds: 252,
@@ -152,6 +153,7 @@ describe('CallEventsService.onCallTerminated', () => {
         body: 'Missed video call from alexandra',
         metadata: {
           callId: String(c._id),
+          streamCallId: 'default:ring-abc',
           callerId: String(initiator),
           callType: CallType.Video,
           conversationId: String(conversation),
