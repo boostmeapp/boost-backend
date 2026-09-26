@@ -238,6 +238,10 @@ export class StreamVideoService implements OnModuleInit {
     keep: { id: string; provider: 'firebase' | 'apn'; providerName: string; voip?: boolean }[],
   ): Promise<number> {
     const client = this.getClient();
+    // Without this install's own token we can't tell its device from the
+    // others, and removing everything would silence the device being used
+    // (e.g. an iPhone that claimed before PushKit handed over its token).
+    if (!keep.length) return 0;
     for (const d of keep) {
       await client.createDevice({
         id: d.id,

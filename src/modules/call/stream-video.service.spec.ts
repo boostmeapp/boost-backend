@@ -152,3 +152,40 @@ describe('StreamVideoService app identity check (Iteration 13)', () => {
   });
 });
 
+
+describe('StreamVideoService.setOnlyPushDevices', () => {
+  let service: StreamVideoService;
+  let client: { createDevice: jest.Mock; listDevices: jest.Mock; deleteDevice: jest.Mock };
+
+  beforeEach(() => {
+    client = {
+      createDevice: jest.fn().mockResolvedValue({}),
+      listDevices: jest.fn().mockResolvedValue({
+        devices: [{ id: 'mine' }, { id: 'other-phone' }, { id: 'old-tablet' }],
+      }),
+      deleteDevice: jest.fn().mockResolvedValue({}),
+    };
+    service = new StreamVideoService();
+    (service as any).client = client;
+  });
+
+  it('keeps this install and removes every other device of the user', async () => {
+    const removed = await service.setOnlyPushDevices('u1', [
+      { id: 'mine', provider: 'apn', providerName: 'boostra-voip-dev', voip: true },
+    ]);
+
+    expect(client.createDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'mine', push_provider: 'apn', voip_token: true, user_id: 'u1' }),
+    );
+    expect(client.deleteDevice.mock.calls.map(([r]) => r.id)).toEqual(['other-phone', 'old-tablet']);
+    expect(removed).toBe(2);
+  });
+
+  it('with no token of its own, removes nothing (it could be removing itself)', async () => {
+    const removed = await service.setOnlyPushDevices('u1', []);
+
+    expect(removed).toBe(0);
+    expect(client.listDevices).not.toHaveBeenCalled();
+    expect(client.deleteDevice).not.toHaveBeenCalled();
+  });
+});
