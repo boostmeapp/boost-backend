@@ -70,12 +70,16 @@ export class VideoController {
     await this.videoService.remove(id, user.id);
   }
 
-  // Public: a guest can share a link too.
+  /**
+   * A guest may share, but only a signed-in user moves the count, and only
+   * once per video.
+   */
   @Post(':id/share')
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  share(@Param('id') id: string) {
-    return this.videoService.incrementShareCount(id);
+  share(@Param('id') id: string, @CurrentUser() user?: User) {
+    return this.videoService.incrementShareCount(id, user?._id?.toString());
   }
 
   @Post(':id/like')

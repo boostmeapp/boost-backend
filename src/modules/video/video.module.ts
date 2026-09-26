@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
+import {
+  VideoShare,
+  VideoShareSchema,
+} from '../../database/schemas/video/video-share.schema';
 import { Boost, BoostSchema } from '../../database/schemas/boost/boost.schema';
 import { UploadModule } from '../upload/upload.module';
 import { LikesModule } from '../likes/likes.module';
@@ -12,6 +16,7 @@ import { FollowsModule } from '../follows/follows.module';
   imports: [
     MongooseModule.forFeature([
       { name: Video.name, schema: VideoSchema },
+      { name: VideoShare.name, schema: VideoShareSchema },
       { name: Boost.name, schema: BoostSchema },
     ]),
     UploadModule,

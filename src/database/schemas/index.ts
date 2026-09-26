@@ -17,3 +17,4 @@ export * from './notification/device-token.schema';
 export * from './boost-campaign/boost-campaign.schema';
 export * from './boost-campaign/boost-impression.schema';
 export * from './boost-campaign/boost-view.schema';
+export * from './video/video-share.schema';

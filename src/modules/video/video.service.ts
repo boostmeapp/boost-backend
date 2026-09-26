@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { VideoShare } from '../../database/schemas/video/video-share.schema';
 import { Video, VideoProcessingStatus, ModerationStatus } from '../../database/schemas/video/video.schema';
 import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
 import { CreateVideoDto, UpdateVideoDto } from './dto';
@@ -20,6 +21,8 @@ import { UploadService } from '../upload/upload.service';
 export class VideoService {
   constructor(
     @InjectModel(Video.name) private videoModel: Model<Video>,
+    @InjectModel(VideoShare.name)
+    private videoShareModel: Model<VideoShare>,
     @InjectModel(Boost.name) private boostModel: Model<Boost>,
     private readonly likesService: LikesService,
     private readonly followsService: FollowsService,
@@ -291,17 +294,42 @@ export class VideoService {
   }
 
   /**
-   * Count a share. Called when the OS share sheet reports a completed share;
-   * deliberately not deduplicated, since sharing twice is two shares.
+   * Count a share. Only signed-in users move the number, and only once per
+   * video: a `video_shares` row per (video, user) is what enforces that, so a
+   * repeat share — or a replayed request — cannot inflate the count.
    */
-  async incrementShareCount(id: string): Promise<{ shareCount: number }> {
+  async incrementShareCount(
+    id: string,
+    userId?: string,
+  ): Promise<{ shareCount: number; counted: boolean }> {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Video not found');
+    const videoId = new Types.ObjectId(id);
+
+    // Guests may share; the count just doesn't move.
+    if (!userId) {
+      const current = await this.videoModel.findById(videoId).select('shareCount').lean();
+      if (!current) throw new NotFoundException('Video not found');
+      return { shareCount: current.shareCount || 0, counted: false };
+    }
+
+    try {
+      await this.videoShareModel.create({ video: videoId, user: new Types.ObjectId(userId) });
+    } catch (err: any) {
+      // Already shared by this user: report the count as it stands.
+      if (err?.code === 11000) {
+        const current = await this.videoModel.findById(videoId).select('shareCount').lean();
+        return { shareCount: current?.shareCount || 0, counted: false };
+      }
+      throw err;
+    }
+
     const video = await this.videoModel
-      .findByIdAndUpdate(id, { $inc: { shareCount: 1 } }, { new: true })
+      .findByIdAndUpdate(videoId, { $inc: { shareCount: 1 } }, { new: true })
       .select('shareCount')
       .lean();
 
     if (!video) throw new NotFoundException('Video not found');
-    return { shareCount: video.shareCount || 0 };
+    return { shareCount: video.shareCount || 0, counted: true };
   }
 
   /**
