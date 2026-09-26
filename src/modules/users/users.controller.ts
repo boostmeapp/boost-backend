@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateUserDto, ChangePasswordDto } from './dto';
-import { JwtAuthGuard } from '../../common/guards';
+import { JwtAuthGuard, OptionalJwtAuthGuard } from '../../common/guards';
 import { CurrentUser, Public, Roles } from '../../common/decorators';
 import { User, UserRole } from '../../database/schemas/user/user.schema';
 import { RolesGuard } from '../../common/guards';
@@ -30,8 +30,12 @@ async updateMe(
   return this.usersService.updateProfile(user.id, updateUserDto);
 }
 
+// Public, but richer for a signed-in viewer: `isFollowing` / `isBlocked` are
+// relative to them. @Public() alone skips auth entirely (no viewer, so both
+// were always false); the optional guard reads the token when there is one.
 @Get(':id/profile')
 @Public()
+@UseGuards(OptionalJwtAuthGuard)
 async getProfile(
   @Param('id') userId: string,
   @CurrentUser() viewer?: User,

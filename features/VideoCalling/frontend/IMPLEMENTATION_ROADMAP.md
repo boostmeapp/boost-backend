@@ -11,7 +11,7 @@
 
 Each iteration is **independently executable**. Implement one, test it, verify the completion criteria, commit, and only then start the next. Where an iteration needs something from an earlier one — or from the backend roadmap — it is named explicitly under *Prerequisites*.
 
-Iterations 1–8 produce a working in-app call. Iterations 9–10 are the native ringing layer, and are the hardest and riskiest part of this project. Iterations 11–13 make it shippable.
+Iterations 1–8 produce a working in-app call. Iterations 9–10 are the native ringing layer, and are the hardest and riskiest part of this project. Iterations 11–14 complete the flow around the call, and Iteration 15 makes it shippable.
 
 ---
 
@@ -31,9 +31,8 @@ Neither is a reason to change provider. Both are reasons to build a dev client o
 
 ```
 src/services/
-  callService.js            # token fetch, client lifecycle, REST calls
-  callkitService.js         # iOS CallKit + PushKit (Iteration 9)
-  callNotificationService.js# Android full-screen intent (Iteration 10)
+  callService.js            # token fetch, client lifecycle, REST calls,
+                            # and StreamVideoRN.setPushConfig (Iterations 9–10)
 
 src/context/
   CallProvider.jsx          # StreamVideo provider + connection lifecycle
@@ -49,6 +48,12 @@ src/components/call/
   ParticipantView.jsx
   CallAvatar.jsx
   CallTimer.jsx
+  AudioRouteSheet.jsx       # speaker / earpiece / Bluetooth picker (Iteration 8)
+  FloatingCallView.jsx      # minimised call over the app (Iteration 13)
+  PostCallSheet.jsx         # rating + call again / message / report (Iteration 14)
+
+src/app/settings/
+  call-privacy.jsx          # "Who can call me" (Iteration 14)
 
 src/hooks/
   useCallPermissions.js
@@ -58,7 +63,25 @@ plugins/
   withCallingPlugin.js      # entitlements, background modes, manifest
 ```
 
+**Audio routing, ringtones and the proximity sensor** are referred to below as `InCallManager` (from `react-native-incall-manager`). That package is **not** installed: the Stream SDK manages call audio itself. Where a step says `InCallManager`, use the SDK's equivalent (its call manager / audio APIs for the installed version).
+
 The three mockup screens map to: `outgoing.jsx` (Incoming Call panel — "Calling…"), `[id].jsx` in video mode (Call Video panel), `[id].jsx` in audio mode (Call Audio panel). The *receiving* side ring UI is `incoming.jsx`, plus the native CallKit/Android UI from Iterations 9–10.
+
+**Decided: the back chevron on the call screens minimises the call; it never ends it.** Only the red button ends a call. The minimised state (a floating call view in the app, plus system picture-in-picture when the app is backgrounded) is Iteration 13.
+
+**Not in the mockups, but part of the complete flow** — and where each one is built:
+
+| Gap | Iteration |
+|---|---|
+| Logging out during a call ends the call first | 4 |
+| "Call again" / "Message" after declined, busy, or no answer | 5 |
+| Incoming UI dismissed when answered or declined on the user's other device | 6, 9, 10 |
+| Remote-muted indicator, auto-hiding controls, mirrored selfie preview, connect/end tones | 7 |
+| Proximity sensor (screen off at the ear), audio route picker for Bluetooth | 8 |
+| Minimise, floating call view, system picture-in-picture | 13 |
+| "Who can call me" setting, update-required and not-accepting-calls states | 14 |
+| Delete / clear call history, missed-call badge, "Call back" from the notification | 14 |
+| Post-call rating, report and block from a call | 14 |
 
 ---
 
@@ -73,19 +96,30 @@ Install every native dependency and produce a **dev client that boots on physica
 - EAS CLI authenticated.
 
 ### Implementation steps
-1. Install the core SDK and its peer dependencies:
+> **Updated during implementation (Sept 2026).** Stream now ships its own CallKit / Android Telecom module, `@stream-io/react-native-callingx`, driven by the SDK's Expo plugin (`"ringing": true`). It replaces `react-native-callkeep`, `react-native-voip-push-notification` and Notifee, and the SDK manages call audio itself, so `react-native-incall-manager` is not installed. `@config-plugins/react-native-callkeep` also no longer supports Expo 54 (v13+ needs Expo 55+).
+
+1. Install the SDK, WebRTC, and Stream's ringing module (Firebase messaging, `react-native-svg`, `react-native-reanimated` and `expo-build-properties` are already present):
    ```
-   npx expo install @stream-io/video-react-native-sdk @stream-io/react-native-webrtc \
-     @react-native-community/netinfo react-native-incall-manager
+   npx expo install @react-native-community/netinfo
+   npm install @stream-io/video-react-native-sdk @stream-io/react-native-webrtc \
+     @stream-io/react-native-callingx "@config-plugins/react-native-webrtc@~13.0.0"
    ```
-   `react-native-svg` (15.12.1) and `react-native-reanimated` (~4.1.1) are already present and satisfy the peer requirements — verify versions rather than reinstalling.
-2. Install the native ringing dependencies now, so a single build validates the whole stack:
+   `@config-plugins/react-native-webrtc` must be **v13** (the Expo 54 line); `npx expo install` picks the latest, which needs Expo 56 and fails with ERESOLVE.
+2. Add to `plugins` in `app.json`, after `expo-notifications`:
+   ```json
+   ["@stream-io/video-react-native-sdk", {
+     "ringing": true,
+     "androidKeepCallAlive": true,
+     "androidMessagingServiceBaseClass": "io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService"
+   }],
+   "@config-plugins/react-native-webrtc"
    ```
-   npx expo install @notifee/react-native react-native-callkeep react-native-voip-push-notification
-   npx expo install @config-plugins/react-native-callkeep
-   ```
-3. Add the SDK's Expo config plugin and the callkeep plugin to the `plugins` array in `app.json`. Leave the `app.config.js` mapping logic untouched — it operates on `config.plugins` and must keep working.
-4. `npx expo prebuild --clean`
+   - `androidMessagingServiceBaseClass` is **essential**: the plugin makes its generated service the only FCM receiver, extending a base class. It defaults to expo-notifications' service, but this app receives FCM through **React Native Firebase** (`index.js`, `pushNotificationService.js`). The wrong base silently breaks existing push.
+   - The webrtc plugin gets **no** permission strings, so it keeps the existing camera/microphone descriptions; those were extended in `app.json` to mention calls (one string per permission, covering every use).
+   - `ringing: true` adds iOS background modes `audio`, `voip`, `fetch`, `processing` (merged with the existing `remote-notification`), which covers much of Iteration 2.
+3. In `expo-build-properties`: `ios.forceStaticLinking: ["RNFBApp", "RNFBMessaging", "stream-react-native-webrtc"]` (Stream's fix for static frameworks with Firebase) and `android.minSdkVersion: 24`. Leave the `app.config.js` mapping logic untouched.
+4. **Native config comes only from config plugins (Continuous Native Generation). Never hand-edit `android/` or `ios/`** — prebuild throws them away and regenerates them. Anything native that no library plugin covers goes in a local plugin under `plugins/` (like `withNotificationAndroidPlugin.js`). `npx expo prebuild --clean` regenerates both locally for inspection and local builds.
+   - ✅ `android/` is untracked (boostra-app commit `a825d90`), so EAS prebuilds Android from `app.json` just as it does iOS. Previously 44 stale files were tracked, which would have made EAS treat Android as a bare project and skip every config plugin.
 5. Build and install a development build on **both** physical devices:
    ```
    npm run build:dev:ios
@@ -94,18 +128,26 @@ Install every native dependency and produce a **dev client that boots on physica
 6. Launch the app. Navigate through the existing tabs. **Nothing should have changed.**
 7. Record the outcome in this iteration's notes: SDK versions installed, and whether anything required a patch.
 
+> **Outcome (26 Sept 2026, local compile gate).** Installed: `@stream-io/video-react-native-sdk` 1.45.2, `@stream-io/react-native-webrtc` 145.3.3, `@stream-io/react-native-callingx` 0.11.4, `@config-plugins/react-native-webrtc` 13.0.x, `@react-native-community/netinfo` 11.4.1. **No patches needed.**
+> - `pod install` passes with `useFrameworks: "static"` + `forceStaticLinking` (first attempt failed only on a network drop cloning firebase-ios-sdk; a rerun succeeded).
+> - iOS Debug simulator build: **BUILD SUCCEEDED** (New Architecture on). Built `Info.plist`: `UIBackgroundModes` = remote-notification, audio, voip, fetch, processing; camera/microphone strings mention calls.
+> - Android `assembleDebug` (from a throwaway prebuild, tracked `android/` untouched): **succeeded** — Stream's Java `compileOptions` does not clash with Kotlin 17.
+> - Merged Android manifest: the generated `StreamVideoMessagingService` (extends RN Firebase's service; non-call pushes go to `super`) is the first `MESSAGING_EVENT` receiver. `callingx` adds `MANAGE_OWN_CALLS`, `USE_FULL_SCREEN_INTENT`, `FOREGROUND_SERVICE_PHONE_CALL` and a `phoneCall|microphone|camera` foreground service — these need Play Console declarations before a store release.
+> - **Still open:** EAS dev builds on physical devices and the regression checks (steps 5–6, testing procedure 1–5).
+
 ### Files / modules affected
 - `package.json`, `package-lock.json`
-- `app.json` (plugins array)
-- `ios/`, `android/` (regenerated by prebuild — not committed if they are gitignored; confirm your convention)
+- `app.json` (plugins array, usage descriptions, `expo-build-properties`)
+- `ios/`, `android/` — generated by prebuild only; never edited, never committed (see step 4)
 
 ### API / event flow
 None.
 
 ### Error and edge-case handling
 - **Duplicate symbols / missing headers at `pod install`** → the static-framework problem. First remedy is `expo-build-properties` → `ios.extraPods` or a `modular_headers` override for the WebRTC pod via a config plugin. Do **not** remove `useFrameworks: "static"` — Firebase depends on it, and removing it will break push notifications you already ship.
-- **App crashes on launch after install** → almost certainly a New Architecture incompatibility in a native module. Isolate by removing dependencies one at a time and rebuilding. If `react-native-callkeep` is the culprit, the fallback is **`expo-callkit-telecom`**, a modern Expo Modules API replacement built on CallKit and `androidx.core:core-telecom`. Switching costs roughly two days and only affects Iterations 9–10.
-- **Android build fails on minSdk** → Notifee and the WebRTC module have floors (commonly 24+). Raise it via `expo-build-properties` in `app.json`.
+- **App crashes on launch after install** → almost certainly a New Architecture incompatibility in a native module. Isolate by removing dependencies one at a time and rebuilding. If `@stream-io/react-native-callingx` is the culprit, report it to Stream first (it's their supported path); the fallback is **`expo-callkit-telecom`**, built on CallKit and `androidx.core:core-telecom`. Switching costs roughly two days and only affects Iterations 9–10.
+- **Android build fails on minSdk** → the WebRTC module needs 24+. Set via `expo-build-properties` in `app.json` (done).
+- **Stream's plugin adds `compileOptions` (Java source 1.8 / target 11)** to `android/app/build.gradle`. If Gradle reports inconsistent JVM targets against Kotlin's 17, that's the cause.
 - **Existing push notifications stop working** → the most dangerous regression in this iteration, because it affects shipped functionality. Test push explicitly in step 6 before declaring success.
 - **`expo-doctor` warnings** → run `npm run doctor` and resolve version mismatches now. They compound.
 
@@ -123,7 +165,7 @@ A dev client with the full calling stack linked, behaving identically to before.
 
 ### Completion criteria
 - [ ] Dev build installs and runs on physical iOS **and** physical Android
-- [ ] New Architecture verified compatible, or the callkeep fallback decision recorded
+- [ ] New Architecture verified compatible, or the callingx fallback decision recorded
 - [ ] Static-framework pod issues resolved without disabling `useFrameworks: "static"`
 - [ ] Existing push, Google Sign-In, and video playback all verified unbroken
 - [ ] SDK versions pinned and committed
@@ -137,6 +179,20 @@ Declare every native capability calling requires, so the OS permits microphone, 
 
 ### Prerequisites
 - Iteration 1.
+
+> **As implemented (Sept 2026).** Iteration 1's config plugins already did most of this, verified in the built app and the merged Android manifest:
+> - iOS `UIBackgroundModes` `audio` + `voip` (+ `fetch`, `processing`), added by the Stream plugin (`ringing: true`) and merged with the existing `remote-notification` — **`app.config.js` is not edited**.
+> - Camera/microphone usage strings: the existing `app.json` strings, extended to mention calls.
+> - Android `RECORD_AUDIO`, `CAMERA`, `MODIFY_AUDIO_SETTINGS`, `FOREGROUND_SERVICE*`, `USE_FULL_SCREEN_INTENT`, `POST_NOTIFICATIONS`, `BLUETOOTH_CONNECT`, `WAKE_LOCK`, `MANAGE_OWN_CALLS`, and typed foreground services (`phoneCall|microphone|camera`, `mediaPlayback|camera|microphone`) — from the Stream plugin and `callingx`'s library manifest.
+>
+> So **no `plugins/withCallingPlugin.js` was created** — it would have nothing to do. Create it later only for native config no library plugin covers (never hand-edit `android/`/`ios/`).
+>
+> What this iteration added:
+> - **`react-native-permissions`** (Stream's recommended permissions library; the SDK doesn't request permissions itself). Its Expo plugin in `app.json` — `["react-native-permissions", { "iosPermissions": ["Camera", "Microphone"] }]` — only adds `setup_permissions` to the generated Podfile; it doesn't touch Info.plist strings.
+> - **`src/utils/callPermissions.js`** — pure rules (no imports): microphone required for every call; camera for video only (audio calls ask when video is turned on, Iteration 8); Bluetooth optional, never blocks; `blocked` = permanently denied.
+> - **`src/hooks/useCallPermissions.js`** — `{ granted, blocked, missing, askable, unavailable, statuses, loading, check, request, openSettings }`. Checks silently on mount and on return to the foreground (picks up changes made in Settings); only `request()` prompts, and Bluetooth only rides along with a required prompt. `POST_NOTIFICATIONS` stays with the existing push service (`pushNotificationService.js`), not duplicated.
+>
+> The original steps below are kept for reference; steps 1–5 and 7–8 are covered as described above.
 
 ### Implementation steps
 1. Create `plugins/withCallingPlugin.js`, modelled on the existing `plugins/withNotificationAndroidPlugin`. Keeping calling config in its own plugin means it can be removed cleanly.
@@ -202,10 +258,17 @@ Fetch a Stream token from the backend and construct an authenticated `StreamVide
 - Iterations 1–2.
 - **Backend Iteration 3** (`POST /calls/token`) deployed and reachable.
 
+> **As implemented (Sept 2026).**
+> - `app.config.js` exposes `extra.apnsEnvironment` from the same `APNS_MODE` constant that writes the iOS entitlement (development → `development`; staging/production → `production`). `callService` sends it in the token request body.
+> - `api.config.js` `CALLS`: all backend call endpoints (token, initiate, history, accept/reject/cancel/end, stats, can-call, settings, unseen-count, seen, hide/clear).
+> - `utils/errorHandler.js` now also returns the backend's `code` (e.g. `CALLEE_BUSY`) — additive, existing callers unaffected.
+> - `services/callService.js` — the only file importing the Stream SDK. `connect(user)` **never throws**; it resolves `{ client, status, error? }` with `status` one of `connected` / `connecting` (client created, SDK still retrying, e.g. offline) / `unavailable` (503 or `CALLING_DISABLED` / `CALLING_UNAVAILABLE` / `ACCOUNT_BANNED`, typed `CallingUnavailableError`) / `failed` / `signed_out` — ready to become Iteration 4's `connectionState`. Initial `token` **plus** `tokenProvider` (refetch on expiry and secret rotation, no retry loop of our own). The Stream user id is the backend's `userId`. Concurrent `connect()` calls share one attempt; a different user tears the old client down first; `disconnect()` cancels an in-flight connect (generation counter). REST wrappers return `{ success, data }` / `{ success: false, message, code, status }`; `getPushConfig()` keeps the provider names for Iterations 9–10.
+> - Logic verified with 13 Node tests against faked SDK/API (concurrency, sign-out mid-connect, user switch, unavailable/failed paths, token refresh). On-device testing procedure 1–6 still pending.
+
 ### Implementation steps
 1. Add call endpoints to `src/config/api.config.js` under a `CALLS` key, matching the existing `CHAT` structure: `TOKEN`, `INITIATE`, `HISTORY`, `ACCEPT`, `REJECT`, `END`.
 2. Create `src/services/callService.js`, following the established service pattern (`chatService.js` is the closest model — module object, `apiClient`, `handleApiError`):
-   - `async fetchToken()` → `POST /calls/token` via `apiClient`, returns `{ apiKey, token, userId, push }`.
+   - `async fetchToken()` → `POST /calls/token` via `apiClient` with body `{ apnsEnvironment }`, returns `{ apiKey, token, userId, push }`. `apnsEnvironment` is `'development'` for the development variant and `'production'` for every other variant — the same rule as `APNS_MODE` in `app.config.js`. Expose it from the config (e.g. via `extra`) rather than re-deriving it, so the two can never disagree. Getting this wrong makes killed-app ringing fail silently on iOS.
    - `async connect(user)` → builds the client:
      ```js
      StreamVideoClient.getOrCreateInstance({
@@ -277,6 +340,13 @@ Connect the Stream client automatically on login, disconnect on logout, and make
 ### Prerequisites
 - Iterations 1–3.
 
+> **As implemented (Sept 2026) — one deliberate change: `CallProvider` does NOT wrap the app in the SDK's `<StreamVideo>`.** Step 1's "render `<StreamVideo>` when a client exists, children unwrapped otherwise" swaps the root element when the client appears, which makes React remount the entire navigation tree — the user would be thrown back to the first screen on every connect and reconnect. The provider exposes its own context (`useCallClient()` → `{ client, connectionState, reconnect }`); **the call screens mount `<StreamVideo client>` in `src/app/call/_layout.jsx` (Iteration 5)**, and app-wide listeners (Iteration 6) subscribe to the client directly.
+> - Mounted in `_layout.jsx` inside `VideoPlaybackProvider`, around the `Stack` and global modals, never swapped. It follows `isAuthenticated`, so every sign-out path (Settings, account deletion, admin, the 401 interceptor) is covered.
+> - Store slice `activeCall`, `incomingCall`, `callConnectionState` + actions. Not persisted by construction: the store's `partialize` only keeps `mode`. The metadata shape for `activeCall`/`incomingCall` is documented on the slice; the live Stream call object is owned by the provider/screens, not the store (Iteration 7 step 10).
+> - Sign-out during a live/ringing call: `callService.hangUpForSignOut()` ends it **through Stream** (`endCall` when active, reject with `cancel`/`decline` while ringing) because the Boostra JWT may already be gone; Stream's webhook closes the backend record. Time-boxed to 3s, then `disconnect()`.
+> - `connectionState` also has `'unavailable'` (calling off → hide entry points). A client that starts offline goes `connecting` → `connected` via `callService.subscribeConnection`. `failed`/`unavailable` are retried on foreground **and** on network regain, spaced ≥30s; a connected client is never re-connected (the SDK reconnects itself). The sign-out branch only runs when leaving a real session, not on a signed-out cold start.
+> - Verified: 12 tests rendering the real provider with React 19 + react-dom (jsdom, faked callService/store/RN) — incl. children never remounted, hang-up-before-disconnect, rapid sign-out/in and user switch, retry spacing; Metro bundles the app (3,098 modules). On-device testing procedure 1–7 still pending.
+
 ### Implementation steps
 1. Create `src/context/CallProvider.jsx`:
    - Reads `user` and `isAuthenticated` from the Zustand store (`useStore`).
@@ -319,6 +389,7 @@ App foregrounded ──> AppState 'active' ──> reconnect if stale
 - **Provider mounted above the auth store** → `user` is null and nothing ever connects. Verify mount order explicitly.
 - **Persisted call state** → the specific bug is a stale `activeCall` rehydrating on launch and navigating the user into a dead call screen. Excluding the slice from `persist` is the fix; verify it by killing the app mid-call.
 - **App-start regression** → measure cold start before and after. If it moved, the connect is not lazy enough.
+- **Logout (or account deletion) during an active or ringing call** → end the call first — `call.leave()` plus `POST /calls/:id/end` (or `/cancel` / `/reject` while ringing) — and only then `disconnect()`. Otherwise the other party is left talking to a silent call until the backend sweeper closes it.
 
 ### Testing procedure
 1. Log in → `connectionState` reaches `connected`; user online in the dashboard.
@@ -328,6 +399,7 @@ App foregrounded ──> AppState 'active' ──> reconnect if stale
 5. Backend unreachable at login → app fully usable, `connectionState: 'failed'`.
 6. Set `activeCall` manually, force-kill, relaunch → `activeCall` is null.
 7. Cold start timing measured before and after → no meaningful regression.
+8. Log out during a live call (once Iteration 7 exists) → the other side sees the call end within seconds; the record is `ended`.
 
 ### Expected result
 The Stream client follows the auth session automatically and invisibly.
@@ -350,6 +422,16 @@ Build the "Calling…" screen from the first mockup panel and wire it to real ca
 - Iterations 1–4.
 - **Backend Iteration 5** (`POST /calls`) for a real ring; the screen can be built and tested against a stub before then.
 
+> **As implemented (Sept 2026) — differences from the steps below:**
+> - **Step 6 (caller joins immediately) replaced.** The backend creates the ringing call, and Stream sends `call.ring` only to the callee, so the caller's copy of the call is *not* in the SDK's ringing mode and the SDK's automatic caller logic doesn't run for it. `callService.startOutgoingCall()` follows the call's session state itself, with the SDK's own rules: accepted by someone else → `join()` → ANSWERED; rejected → DECLINED or BUSY (from the `call.rejected` reason, read a tick after the state update); ended before an answer or `call.missed` → NO_ANSWER; plus a 60s client safety limit. The caller joins only on answer. The live call object is held by `callService`, so `router.replace` to `/call/[id]` never drops it.
+> - **Step 9 (local ringback) deferred.** The SDK's new `callManager` has no ringback (the old InCallManager did). Playing one needs a new native audio dependency (e.g. `expo-audio`) coordinated with the WebRTC/CallKit audio session — the classic cause of silent calls, and only verifiable on devices. The screen shows clear visual status meanwhile.
+> - **Speaker toggle:** `callManager.start({ deviceEndpointType })` before join (earpiece for audio, speaker for video), `callManager.speaker.setForceSpeakerphoneOn()` after. **Camera toggle (video):** whether the camera starts on.
+> - **`src/app/call/_layout.jsx`** mounts the SDK's `<StreamVideo>` (re-exported by `callService`) for the call screens only; headers off, `gestureEnabled: false`, fade.
+> - **Copy:** `src/utils/callCopy.js` maps every backend refusal code (Iterations 4, 5, 11, 12, 13) and ring outcome to text. Blocked and unavailable read identically ("Can't call this user right now"). Declined / busy / no answer (and refusals where it makes sense) offer **Call again** and **Message** (opens or creates the chat thread), then auto-dismiss after 5s (Iteration-5 gap row).
+> - **Permissions:** `useCallPermissions().request()` runs before `POST /calls`; denial shows a rationale with **Allow access**, or **Open Settings** when permanently blocked. No backend record is created.
+> - **`/call/[id]` is a temporary minimal screen** (avatar, name, elapsed time, End; closes when the other side hangs up) so an answered call has somewhere to land. Iteration 7 replaces it.
+> - Verified: 20 Node tests of the caller flow and copy against a faked SDK; lint clean; Metro bundles. **Device testing pending.** To open the screen before Iteration 11's buttons exist, deep-link it: `boostra://call/outgoing?calleeId=<id>&calleeName=<name>&callType=audio`.
+
 ### Implementation steps
 1. Create the route group `src/app/call/_layout.jsx` — a stack with headers hidden, `gestureEnabled: false` (swiping away a live call must be impossible), and `animation: 'fade'`.
 2. Create `src/app/call/outgoing.jsx`, taking `calleeId`, `calleeName`, `calleeImage`, `callType` as route params so it renders instantly from cached data with no fetch-and-flash.
@@ -366,6 +448,7 @@ Build the "Calling…" screen from the first mockup panel and wire it to real ca
 8. Handle end-call: leave the Stream call, `POST /calls/:id/cancel`, `router.back()`.
 9. Local ringback tone via `react-native-incall-manager` so the caller hears the call is live.
 10. `expo-keep-awake` (already a dependency) to hold the screen on.
+11. **Unsuccessful outcomes offer a next step instead of just disappearing.** On declined, busy, or no answer, keep the screen for ~5 seconds with the outcome text and two buttons — **Call again** and **Message** (opens the chat thread, creating it if needed) — then auto-dismiss. A screen that vanishes the instant a call fails leaves the user with nowhere to go.
 
 ### Files / modules affected
 - `src/app/call/_layout.jsx` *(new)*
@@ -413,6 +496,7 @@ User taps call ──> router.push('/call/outgoing', { calleeId, calleeName, cal
 8. Android back button while ringing → ends the call.
 9. Double-tap the call button rapidly → exactly one call is created.
 10. Airplane mode mid-ring → "Connecting…", then resolves on the backend timeout.
+11. Declined / busy / no answer → outcome text with **Call again** and **Message**; Call again starts a new call, Message opens the thread; untouched, the screen dismisses after ~5s.
 
 ### Expected result
 A caller can start a call and sees accurate live status through every outcome.
@@ -436,6 +520,16 @@ When the app is **open**, an incoming call surfaces a full-screen ring UI with a
 - Iterations 1–5.
 - **Backend Iterations 5 and 7.**
 
+> **As implemented (Sept 2026).**
+> - `callService.watchIncomingCalls()` reports each new ringing call not created by this user from `client.state.calls$` (the SDK registers it on `call.ring`), as store metadata: backend `callId` and `callType` from the call's `custom` data, caller from `createdBy`. `useIncomingCall` (mounted in `CallProvider`) stores it and `router.push('/call/incoming')`; if a call is already active or ringing it declines the new one as **busy**. The client also has the SDK's `rejectCallWhenBusy`.
+> - **Accept** = permissions → `POST /calls/:id/accept` **first** (403/404/409 → "Call ended", never join a dead call; a network error still joins) → `call.join()`, which also accepts on Stream. **Decline** = leave with `reject`/`decline` + `POST /reject`. **Busy** = leave with `reject`/`busy` and **no** `POST /reject`: the webhook records "callee busy", whereas a REST reject would count as a deliberate rejection toward the caller's reject-backoff.
+> - **Auto-dismiss** (`onIncomingCallGone`): the call leaves `ringing` without this device answering — caller cancelled, timed out, or answered/declined on the user's other device (the SDK leaves for us) — so step 9 (multi-device) needs no extra code.
+> - **Step 6 (ringtone) deferred** for the same reason as Iteration 5's ringback (no audio library wired to the call audio session yet). The screen **vibrates** in a repeating pattern (follows the device's vibrate settings), and the left button silences it.
+> - **Step 7 / feed playback:** no extra code — pushing the route removes navigation focus from the feed and the video page, and both already pause on blur.
+> - Accept with permissions denied declines the call and shows why (**Open Settings** when blocked). Android back declines; leaving the screen any other way while it rings also declines, so the caller is never left hanging.
+> - The system CallKit/Telecom UI is not shown yet: the SDK only uses `callingx` after `setPushConfig` sets it up (Iteration 9), which is where the foreground de-duplication (Iteration 9 edge cases) applies.
+> - Verified: 12 Node tests of the service (report once, own/non-ringing ignored, accept order and 409, network-down join, join failure, decline, busy without REST, gone vs answering) + 5 React renders of `useIncomingCall` (idle → opens, active → busy, second ring → busy, stops on sign-out); lint clean; Metro bundles. **Device testing pending.**
+
 ### Implementation steps
 1. Create `src/hooks/useIncomingCall.js`:
    - Subscribes to the Stream client's ring events (`client.state.calls` / the SDK's incoming-call observable).
@@ -451,6 +545,7 @@ When the app is **open**, an incoming call surfaces a full-screen ring UI with a
 6. Ringtone and vibration via `react-native-incall-manager`. Respect the device silent switch — a call that rings through silent mode is a bug report.
 7. **Present above everything.** Use a modal route so an incoming call interrupts any screen, including the video player and chat.
 8. Auto-dismiss when the caller cancels or the backend ring timeout fires — do not leave a stale ring UI on screen.
+9. **Multi-device:** Stream rings every device the callee is signed in on. When the call is accepted or declined *by this same user on another device*, the SDK reports it — dismiss the ring UI immediately on this device, stop the ringtone, and show nothing else (no "missed call"). Without this, a user who answers on their iPad keeps ringing on their phone.
 
 ### Files / modules affected
 - `src/hooks/useIncomingCall.js` *(new)*
@@ -490,6 +585,7 @@ Stream ──ring event──> useIncomingCall (active app-wide via CallProvider
 7. Ring B with the silent switch on → vibration only.
 8. Accept an already-cancelled call by tapping at the exact moment → "Call ended", no join, no crash.
 9. Ring B while B is already in a call → auto-rejected as busy, existing call undisturbed.
+10. B signed in on two devices, both foregrounded → both ring; accept on one → the other stops ringing within ~2s and shows nothing further. Repeat with decline.
 
 ### Expected result
 An open app reliably surfaces and handles incoming calls.
@@ -501,6 +597,7 @@ An open app reliably surfaces and handles incoming calls.
 - [ ] Audio session coordinated with `expo-video`
 - [ ] Silent switch respected
 - [ ] Busy and already-ended races handled without crashing
+- [ ] Answering or declining on one device stops the ring on the user's other devices
 
 ---
 
@@ -511,6 +608,18 @@ Build the second mockup panel: full-screen remote video, local picture-in-pictur
 
 ### Prerequisites
 - Iterations 1–6.
+
+> **As implemented (Sept 2026)** — boostra-app commit `187905a`.
+> - SDK UI (`StreamCall`, `ParticipantView`, `useCallStateHooks`, `hasAudio`, `hasVideo`) is **re-exported by `callService`**, so the SDK is still imported in one file only. `src/components/call/ParticipantView.jsx` wraps it: the SDK's label and quality badges are off, and a module-level avatar fallback is shown when someone's camera is off.
+> - **Layout chosen from state, not the route:** the video layout whenever the call started as video or either side has video on (an audio call switches automatically when a camera turns on); otherwise the audio layout (basic for now, refined in Iteration 8). Pure rules in `src/utils/activeCallState.js`.
+> - **Timer from the join timestamp:** `callService` records `joinedAt` at join (both directions); `CallTimer` recomputes from it every tick, so it never drifts or restarts after a reconnect or remount.
+> - **Controls** reflect SDK device state (`useCameraState` / `useMicrophoneState` `status`), never optimistic local state. Speaker via `callService.setSpeakerphone()`. A camera error shows "Camera unavailable…" rather than a black tile. The callee now also gets the earpiece/speaker default before join (the caller already did).
+> - **Self-view:** `DraggablePip` (gesture-handler + Reanimated), clamped inside the safe area between the top bar and the controls, snapping to the nearest corner. Mirrored for the front camera only. `GestureHandlerRootView` is added in `src/app/call/_layout.jsx` — the app had none at its root.
+> - **Auto-hiding controls** after 4s in the video layout (tap to show); they stay visible while a status/notice is up. The control bar is the mockup's translucent dark pill (contrast over video). Five 52px buttons with a 14px gap fit 360px-wide phones.
+> - **States:** "Connecting…" (joined, other person not in yet), "Reconnecting…" (SDK reconnecting/offline/migrating), "Waiting for {name}…" when they drop — the call ends as "Call lost" after 30s; "Poor connection" from SFU quality; the remote-muted mic-off badge; the other side hanging up shows "Call ended" then closes.
+> - **Stats:** on end (either side) `callService` posts `{ jitter, reconnectCount }` to `/calls/:id/stats` (backend Iteration 11) — jitter from the SDK's subscriber stats, reconnects counted from `callingState`. The SDK exposes no MOS or packet-loss figure in its aggregate report, so those are omitted.
+> - **Not done here:** step 11's back chevron stays hidden (Iteration 13); step 15's connect/end tones need the audio library deferred in Iterations 5–6; GSM interruptions are left to the SDK's call manager (it re-asserts the route after an interruption) — verify on device.
+> - Verified: 13 tests rendering the real screen (react-native-web + jsdom, SDK faked) and 6 service tests (join time, reconnect count, stats on either end, none if never joined, callee route); lint clean; Metro bundles. **Device testing pending.**
 
 ### Implementation steps
 1. Create `src/app/call/[id].jsx` reading `callId` from route params, plus `mode` (`video` | `audio`).
@@ -526,6 +635,12 @@ Build the second mockup panel: full-screen remote video, local picture-in-pictur
 7. End call → leave, `POST /calls/:id/end`, `router.replace('/')` back to the tab the user came from.
 8. Keep the screen awake and lock to portrait for the first release. Landscape is a whole additional layout and is not worth it now.
 9. Post call-quality stats to the backend on end (backend Iteration 11), read from the SDK's stats API.
+10. **Own the call outside the screen.** Keep the joined Stream `call` object and its subscriptions in `CallProvider` / the store's `activeCall`, not in `[id].jsx` component state. The screen only *renders* the call. This costs nothing now and is what lets Iteration 13 minimise the call without dropping it when the screen unmounts.
+11. **Back chevron:** hide it until Iteration 13 lands. It must never end the call, and until minimising exists there is nowhere for it to go.
+12. **Remote-muted indicator** — when the other participant's microphone is off, show a mic-off badge next to their name in the top bar (and on the audio-mode card in Iteration 8). Without it, "can you hear me?" is unanswerable.
+13. **Auto-hiding controls in video mode** — fade out the top bar and control bar after ~4 seconds without interaction; a tap anywhere brings them back. Keep them visible while a toast or "Reconnecting…" is showing. The mockup shows them visible, which is the state after a tap.
+14. **Mirrored self-view** — mirror the local preview for the front camera only; the back camera and the video sent to the other person are never mirrored. Check the SDK's default before adding code.
+15. **Audio cues** — a short tone on connect and on end, via `InCallManager`, so a user who is not looking at the screen knows the state changed.
 
 ### Files / modules affected
 - `src/app/call/[id].jsx` *(new)*
@@ -565,6 +680,9 @@ End ──> call.leave() ──> POST /calls/:id/end ──> POST /calls/:id/sta
 7. Receive a real phone call mid-call → audio pauses and resumes correctly.
 8. 30-minute call → timer correct, no leak, no thermal or battery anomaly.
 9. End from each side in turn → correct record and duration both ways.
+10. Remote mutes → the mic-off badge appears on this side within a second; unmute → it clears.
+11. No touch for 4s → controls fade; tap → they return. During "Reconnecting…" they stay visible.
+12. Front camera → self-view mirrored; the other side sees you unmirrored (hold up text to check). Back camera → not mirrored.
 
 ### Expected result
 A production-quality video call screen matching the mockup.
@@ -576,6 +694,8 @@ A production-quality video call screen matching the mockup.
 - [ ] Background audio continues on both platforms
 - [ ] GSM interruption handled
 - [ ] Matches the mockup
+- [ ] Call object owned by `CallProvider`, not the screen
+- [ ] Remote-muted indicator, auto-hiding controls, and correct mirroring verified
 
 ---
 
@@ -586,6 +706,15 @@ Build the third mockup panel — audio-only — and let a call move between audi
 
 ### Prerequisites
 - Iterations 1–7.
+
+> **As implemented (Sept 2026).**
+> - **Audio layout = mockup 3:** plain dark background, the other person's avatar (140) in the centre with a "Muted" chip when they're muted, and **you** in a small card bottom-right, where the self-view sits in video. Step 2 says the card shows the *other* participant; the mockup shows the local user there ("Michael Tom"), so the mockup was followed. Same control bar as video, in the dark pill; flip is present but disabled while the camera is off. A cross-fade on every layout switch.
+> - **Mode switching** (steps 3–4, 6) was already a render change in Iteration 7 (`activeCallView`): the video layout whenever either side has video, so asymmetric calls render correctly.
+> - **Turning video on mid-call** first requests camera access (an audio call only asked for the mic); denied → stays audio with an explanation. The camera button is disabled while the SDK reports a toggle pending (`isTogglePending`) — the rapid-toggle debounce from the edge cases.
+> - **Routing (step 5, edge "routing on toggle"):** audio calls start on the earpiece, video on the speaker (set before join on both sides, Iterations 5 and 7). Audio → video moves the earpiece to the speaker unless a headset is in use; **video → audio leaves the route alone** (the decision the edge case asked for).
+> - **Step 8 (proximity):** no app code — the SDK's own call manager enables the proximity sensor while audio is on the earpiece and disables it otherwise, on both iOS (`StreamInCallManager.updateProximityMonitoring`) and Android (`ProximityManager`). Verify on device.
+> - **Step 9 (route picker):** `useAudioDeviceStatus()` gives the real route and the outputs. With a Bluetooth or wired headset connected, the speaker button opens `AudioRouteSheet` (e.g. iPhone / Speaker / AirPods; select via `callService.selectAudioDevice`); otherwise it toggles the speaker. Its icon shows the current route (speaker / earpiece / Bluetooth / headset). Pure rules in `audioRouteInfo()` (`src/utils/activeCallState.js`).
+> - Verified: 12 tests rendering the real screen (react-native-web + jsdom, SDK faked) — layout, self card, muted chip/card, route toggle, headset picker, auto-speaker only audio→video and never with a headset, camera permission on enable only, pending guard; lint clean; Metro bundles. **Device testing pending** (routing, proximity, Bluetooth).
 
 ### Implementation steps
 1. Extend `src/app/call/[id].jsx` for `mode === 'audio'` rather than creating a second screen. The call state, timer, controls, and lifecycle are identical; only the media presentation differs. Two screens would mean two places to fix every bug.
@@ -600,10 +729,13 @@ Build the third mockup panel — audio-only — and let a call move between audi
 5. Default audio routing: earpiece for audio calls, speaker for video calls. That is the expected platform behaviour, and getting it wrong is immediately noticeable.
 6. Handle asymmetry — one side on video, the other audio-only is legitimate and must render correctly on both ends.
 7. Animate the transition between layouts so it does not appear as a glitch.
+8. **Proximity sensor** — in audio mode on the earpiece, turn the screen off when the phone is at the ear (`InCallManager` exposes this). Disable it when the speaker, Bluetooth, or video is on. Without it, cheeks press mute and end mid-call.
+9. **Audio route picker** — when a Bluetooth or wired headset is connected, the speaker button opens `AudioRouteSheet` (e.g. iPhone / Speaker / AirPods) instead of toggling; with no headset it stays a simple speaker toggle, as in the mockup. The icon shows the current route.
 
 ### Files / modules affected
 - `src/app/call/[id].jsx`
 - `src/components/call/*`
+- `src/components/call/AudioRouteSheet.jsx` *(new)*
 
 ### API / event flow
 ```
@@ -635,6 +767,8 @@ Camera toggled off ──> reverts both sides to audio layout
 6. Connect a Bluetooth headset → audio routes to it and survives the toggle.
 7. Toggle the camera ten times rapidly → no crash, no stuck state.
 8. Audio call with camera permission denied → enabling shows the rationale, call continues.
+9. Audio call on earpiece, phone to the ear → screen turns off; away → back on. Speaker on → the screen stays on at the ear.
+10. Bluetooth headset connected → the speaker button opens the route sheet; each route works; disconnect the headset mid-call → audio falls back to the earpiece and the button returns to a toggle.
 
 ### Expected result
 Audio calls work natively and upgrade to video without interrupting the session.
@@ -646,10 +780,14 @@ Audio calls work natively and upgrade to video without interrupting the session.
 - [ ] Asymmetric video state renders correctly
 - [ ] Bluetooth routing correct and stable across toggles
 - [ ] One screen serves both modes
+- [ ] Proximity sensor active on earpiece only
+- [ ] Route picker appears only when a headset is connected
 
 ---
 
 # Iteration 9 — iOS CallKit and PushKit
+
+> **Rework before starting (library change, see Iteration 1).** This iteration was written for `react-native-callkeep` + `react-native-voip-push-notification`. The installed stack is `@stream-io/react-native-callingx`, configured by `StreamVideoRN.setPushConfig` (iOS `pushProviderName`, `supportsVideo`, `callsHistory`, `displayCallTimeout`; `createStreamVideoClient`; `shouldRejectCallWhenBusy`) and initialised in `index.js` before app registration. The SDK reports VoIP pushes to CallKit itself. The *goals, edge cases and tests below still apply*; the implementation steps must be re-derived from Stream's ringing docs for the installed SDK version.
 
 ### Goal
 Make calls ring on a **locked or killed iPhone** with the native iOS call UI. This is the highest-risk iteration in the project; budget accordingly.
@@ -659,9 +797,22 @@ Make calls ring on a **locked or killed iPhone** with the native iOS call UI. Th
 - **Backend Iteration 6** — APNs VoIP provider configured in Stream.
 - Physical iPhone. Simulators cannot receive VoIP pushes, full stop.
 
+> **As implemented (Sept 2026)** — re-derived for `callingx`; steps 1–8 below are superseded, the edge cases and tests still apply.
+> - **`callService.configurePush()`**, called from `index.js` after the RN Firebase background handler and before `expo-router/entry` (a VoIP push starts the app with no React tree). It calls `StreamVideoRN.setPushConfig` with: `isExpo`; iOS `pushProviderName`, `supportsVideo`, `callsHistory: true` (Recents — test 11), `skipIncomingPushInForeground: true`; Android `pushProviderName` + `incomingChannel` (verified in Iteration 10); `shouldRejectCallWhenBusy`; and `createStreamVideoClient`. It never throws.
+> - **Provider names are derived from the build** (development → `boostra-voip-dev`, else `boostra-voip-prod`; `boostra-android`), because `setPushConfig` must run synchronously at entry, before anything async could fetch them. They equal the backend defaults. `connect()` **warns** if the token response reports different names — renaming providers on the backend needs an app update.
+> - **`createStreamVideoClient`** rebuilds the client from the stored session (AsyncStorage: on iOS readable after first unlock, i.e. on a locked phone) via the same `buildClient()` as `connect()`. `getOrCreateInstance` keys on `apiKey/userId`, so the client the SDK uses to answer from the lock screen **is** the one `connect()` picks up later. Returns `undefined` when signed out.
+> - **The immediate `reportNewIncomingCall` rule (steps 4, 6; edge cases 1–2)** is handled natively by `callingx`'s PushKit handler — no JS runs before the report, so there is no `await` to get wrong.
+> - **Answer from CallKit → the SDK joins by itself.** `watchIncomingCalls` follows each ring's `callingState`; reaching `joined` without an in-app accept (tracked in `localAccepts`) adopts it as the current call (`joinedAt`, stats) and `useIncomingCall` opens `/call/[id]` — `replace` if the in-app ring screen is up, else `push`. **Cold start** (step 8): a call already joined when the watcher starts is adopted too, not shown as a ring. The backend record is set to active by the `call.accepted` webhook.
+> - **Duplicate UI in the foreground (edge case 6):** `skipIncomingPushInForeground` suppresses CallKit while the app is open, but only on **iOS 26.4+**. On older iOS both appear and stay in sync — answering in-app reports the answer to CallKit (SDK `join`), declining ends the CallKit call (SDK `leave`), answering in CallKit replaces the in-app screen, and `declineIncomingCall` refuses to decline a call that is already current.
+> - **Decline / mute / end from the native UI and remote termination** (steps 5, 7; edge case 3) are handled by the SDK's callingx integration — verify with tests 5–9.
+> - **Logout:** teardown calls `StreamVideoRN.onPushLogout()` while the client is still connected, so a signed-out phone stops receiving VoIP pushes for that account (edge case the roadmap didn't list).
+> - **No native changes** in this iteration: `ringing: true` (Iteration 1) already wired PushKit/CallKit into the app delegate via the Stream plugin.
+> - Verified: 11 Node tests of the service (config shape per build, closed-app client = same instance, signed-out/down paths, name-mismatch warning, system-answer adoption incl. cold start, no adoption for in-app answers, decline guard, push logout) + 2 hook render tests (replace vs push); lint clean; iOS and Android bundles. **Everything in the testing procedure below needs a physical iPhone, the APNs VoIP providers from backend Iteration 6, and ideally a TestFlight build.**
+> - **App Review notes (completion criterion):** reviewers need a second party to receive a call. Provide two demo accounts that follow each other, and say: "Sign in as A on the review device; we will call it from B at the agreed time", or give them a second device/account and step-by-step instructions.
+
 ### Implementation steps
 1. Create `src/services/callkitService.js` wrapping `react-native-callkeep` and `react-native-voip-push-notification`.
-2. **Register the VoIP token.** On app start when authenticated, register for PushKit, obtain the VoIP token, and pass it to the Stream client along with the `apnProviderName` from the token response (backend Iteration 6). The backend supplies the provider name specifically so the same binary works against staging and production.
+2. **Register the VoIP token.** On app start when authenticated, register for PushKit, obtain the VoIP token, and pass it to the Stream client along with the `apnProviderName` from the token response (backend Iteration 6). The backend picks that name from the `apnsEnvironment` the app sent (Iteration 3), so it always matches the build's APNs entitlement, whichever backend the build talks to.
 3. **Set up CallKeep** with the display name, a ringtone, and `supportsVideo: true`.
 4. **The critical constraint:** iOS *requires* that every PushKit VoIP push results in a `reportNewIncomingCall` — synchronously, in the same execution. Miss it and iOS terminates the app and eventually revokes VoIP privileges entirely. Report to CallKit **first**, then do any other work. The Stream SDK provides a helper for this path; use it rather than hand-rolling, and do not add any `await` before the report.
 5. Wire CallKeep events:
@@ -704,6 +855,7 @@ Remote ends ──> callkeep.endCall(uuid)  <- or iOS shows a phantom call forev
 - **Phantom ongoing call** → always report termination, including on error paths and on remote hang-up.
 - **Wrong APNs environment** → silent failure, no error anywhere. Cross-check against `APNS_MODE` in `app.config.js` and the Stream provider config. Suspect this first whenever "nothing rings."
 - **Push arrives while the app is foregrounded and already showing the in-app ring** → deduplicate by call ID; never show both.
+- **Answered or declined on the user's other device** → end the CallKit call with the "answered elsewhere" / "declined elsewhere" reason, so iOS dismisses the ring without logging a missed call in Recents.
 - **Cold start answer race** → queue the action; do not drop it.
 - **VoIP token changes** → re-register on every app start, not once at install.
 - **App Review** → VoIP background mode with a real CallKit implementation is compliant. Provide a demo account and clear testing instructions in the review notes, because reviewers must be able to receive a call.
@@ -738,6 +890,8 @@ Calls ring on a locked, killed iPhone with the native UI and are fully controlla
 
 # Iteration 10 — Android incoming call
 
+> **Rework before starting (library change, see Iteration 1).** This iteration was written for Notifee. The installed stack uses `@stream-io/react-native-callingx` (Android Telecom) via `StreamVideoRN.setPushConfig` (Android `pushProviderName`, `incomingChannel`), with the SDK plugin's generated FCM service (extending React Native Firebase's). `androidKeepCallAlive: true` already provides the camera/microphone foreground service. The *goals, edge cases and tests below still apply*; re-derive the steps from Stream's docs for the installed SDK version.
+
 ### Goal
 The Android equivalent: a full-screen incoming call over the lock screen, plus a foreground service that keeps an active call alive.
 
@@ -745,6 +899,18 @@ The Android equivalent: a full-screen incoming call over the lock screen, plus a
 - Iterations 1–9 (9 is not strictly required, but doing iOS first surfaces the shared design).
 - **Backend Iteration 6** — Firebase provider configured in Stream.
 - Physical Android device.
+
+> **As implemented (Sept 2026)** — the Notifee steps below are superseded by `callingx`; goals, edge cases and tests still apply.
+> - **Already provided, no new code:**
+>   - The ring push is handled natively by the plugin-generated `StreamVideoMessagingService` (extends RN Firebase's service; non-call messages go to `super`), which shows Android's CallStyle incoming-call notification with a full-screen intent via `callingx`/Telecom.
+>   - The SDK's `firebaseDataHandler` is **deprecated** ("ring notifications are now handled by the SDK internally"), so **step 2 is not needed**: the existing `setBackgroundMessageHandler` in `index.js` stays exactly as it is — no branching, no risk to existing notifications.
+>   - FCM token registration against the Firebase provider (`addDevice`, refreshed on token change) is automatic; `onPushLogout()` from Iteration 9 removes it at sign-out.
+>   - Incoming channel (`boostra_incoming_calls`) set in `configurePush`; accept/decline buttons and cancel-on-every-termination are callingx's; the typed foreground service is `androidKeepCallAlive` (Iteration 1) plus callingx's `phoneCall|microphone|camera` service.
+> - **⚠ Privacy fix — `plugins/withCallLockScreenGuard.js` (new local config plugin):** the Stream plugin injects `StreamVideoReactNative.setupCallActivity(this)` into `MainActivity.onCreate` **unconditionally**, turning on `showWhenLocked`/`turnScreenOn` for every launch — e.g. a chat notification tapped on the lock screen, or the app still open after a call, would be usable over the lock screen without unlocking. The plugin adds `onPostCreate`/`onNewIntent` overrides that allow it only for callingx call intents (`io.getstream.CALL_*` action or `call_id` extra — the full-screen incoming intent has both) and an `onStop` override that clears it when the app leaves the screen. It runs independently of mod order, is idempotent (marker comment), and fails prebuild loudly if `MainActivity` already overrides one of those methods. Registered in `app.config.js` before `withNotificationAndroidPlugin`. Verified: a throwaway prebuild contains both Stream's line and the guard, and `assembleDebug` compiles. Residual: after declining from the full-screen UI on a locked phone, the app stays visible until the screen turns off (`onStop`); clearing it at that moment needs a native call — acceptable, noted.
+> - **Step 8 / battery optimisation (completion criterion):** `useCallReliabilityPrompt` (mounted in `CallProvider`, Android only) asks **once per issue, ever**, ~6s after calling first connects: notifications off → "Turn on notifications for calls" → app settings (without them the incoming-call notification can't show); else, on aggressive OEMs (Xiaomi/Redmi/Poco, Huawei/Honor, Oppo/Realme/OnePlus, Vivo, Samsung, …) → the battery-optimisation list (`IGNORE_BATTERY_OPTIMIZATION_SETTINGS`, no Play-restricted permission). Rules in `src/utils/callReliability.js`.
+> - **Full-screen intent (Android 14+):** granted by Play only when the listing declares calling as core functionality — a **Play Console task**, not code. The SDK exposes no JS check; if it's revoked the call still arrives as a heads-up notification.
+> - Step 9 (Telecom): `callingx` already registers calls with Telecom (`MANAGE_OWN_CALLS`).
+> - Verified: 6 tests (OEM detection, prompt order and once-only, iOS never; plugin appends once, idempotent, refuses duplicate overrides and non-Kotlin); Gradle build of the guarded `MainActivity`; lint; Android + iOS bundles. **Device testing pending** — testing procedure 1–10 on at least one stock and one aggressive-OEM device; record per-device hit rates.
 
 ### Implementation steps
 1. Create `src/services/callNotificationService.js` using `@notifee/react-native`.
@@ -759,7 +925,7 @@ The Android equivalent: a full-screen incoming call over the lock screen, plus a
 6. Full-screen intent must show over the lock screen — `setShowWhenLocked` and `setTurnScreenOn` on the activity, via the Iteration 2 config plugin.
 7. Cancel the notification on every termination path, including remote cancel and timeout.
 8. Request `POST_NOTIFICATIONS` on Android 13+ (the existing push service likely already does — extend, do not duplicate).
-9. **Optional but recommended:** register with the Telecom stack (`androidx.core:core-telecom`) so calls integrate with the system dialer. This is polish, not a requirement; defer it if Iteration 13 is close.
+9. **Optional but recommended:** register with the Telecom stack (`androidx.core:core-telecom`) so calls integrate with the system dialer. This is polish, not a requirement; defer it if Iteration 15 is close.
 
 ### Files / modules affected
 - `src/services/callNotificationService.js` *(new)*
@@ -793,6 +959,7 @@ Call ends (any path) ──> cancel notification + stop foreground service
 - **Full-screen intent restrictions (Android 14+)** → calling is an approved use case, but it must be justified in the Play Console.
 - **Doze mode** → high-priority FCM messages pierce Doze. Verify the priority is actually set on Stream's side.
 - **Notification not cancelled** → a stuck ongoing call notification the user cannot dismiss. Cancel on every path.
+- **Answered or declined on the user's other device** → one more termination path: cancel the full-screen notification and stop the ringtone, with no missed-call follow-up.
 
 ### Testing procedure
 All on **physical Android hardware**, ideally two vendors (one Samsung or Xiaomi):
@@ -829,11 +996,54 @@ Put call buttons where users expect them, and make the pre-call experience clear
 - Iterations 1–8 (9–10 recommended).
 - **Backend Iterations 4 and 10.**
 
+> **As implemented (Sept 2026)**
+> - **One path for every entry point — `src/hooks/useStartCall.js`:** chat header, profile, history rows and chat call bubbles all call `startCall({ peerId, peerName, peerImage, callType, conversationId? })`. It:
+>   - ignores a second tap within 1.5s from any entry point;
+>   - refuses with a reason when a call is already live or ringing, when not connected ("Calling unavailable — check your connection."), or when calling is unavailable;
+>   - shows the pre-flight sheet when needed (below);
+>   - then pushes `/call/outgoing`, which asks for permissions and starts the call as before. The outgoing screen is also still guarded once per screen.
+> - **Button rules — `callButtonState` in `src/utils/callEntry.js`:**
+>   - **Hidden** for yourself, a blocked user (server `isBlocked` or the store's `blockedUserIds`), a deleted account, `connectionState` `unavailable` (e.g. `CALLING_DISABLED` / 503), or signed out.
+>   - **Visibly disabled** while connecting or failed. Tapping still gives the reason.
+>   - The chat tab's call-history icon hides on the same unavailable states.
+>   - Mutual follow is **not** checked on the client yet. A non-mutual call reaches the backend and the outgoing screen shows "You can call X once you follow each other". Iteration 14 upgrades the buttons to `GET /calls/can-call/:userId`.
+> - **Chat header:** voice and video icons, passing `conversationId`.
+> - **Profile:** round phone and video buttons after Follow / Message, with no `conversationId`.
+> - **Call history — new route `src/app/calls.jsx`:**
+>   - Opened from a phone icon in the Messages header.
+>   - Backed by `GET /calls`, 20 per page, loading more near the end of the list, with pull-to-refresh and de-duplication by `callId`.
+>   - Each row shows direction arrow, status/duration and relative time; missed calls are red.
+>   - Empty state, and an error state with Try again.
+>   - Tapping a row calls again with the same type and thread. A deleted user shows "This user is no longer available."; a blocked user shows a neutral refusal.
+> - **Call messages in threads:**
+>   - `formatGiftedMessage` now keeps `type` and `call`.
+>   - `renderBubble` renders `type: 'call'` as `CallEventBubble`. Its copy comes from `call` plus the viewer's side, not from `text`: "Outgoing voice call · 4:12", "Missed video call" in red for the callee, "Outgoing voice call · No answer" for the caller.
+>   - Tapping it calls back with the same type. Tap-to-call is omitted when calling is hidden (e.g. blocked). There is no long-press menu on call bubbles.
+>   - Live arrival uses the existing `newMessage` socket handler. A call message never replaces a pending image upload's temp bubble.
+>   - The **"Screen mount → GET /calls?conversationId=" step is not needed**: backend Iteration 10 already writes call messages into the thread's message history.
+> - **Missed-call notifications:** `missedCallRoute(metadata, callerName)` opens the chat thread when `conversationId` is present, otherwise the caller's profile. It is used in two places:
+>   - `NotificationsScreen.handleRowPress`.
+>   - The push tap handler in `_layout.jsx`. `attachListeners`' `onOpen` now also receives the notification title, so the thread header shows the caller's name.
+> - **Pre-flight sheet:**
+>   - `CallPreflightSheet` appears only on the first call that would actually show the OS prompt: a required permission is not granted and not blocked.
+>   - Silent check via the new `checkCallPermissions(callType)`.
+>   - Remembered in AsyncStorage (`boostra_call_preflight_seen`) as soon as it's shown.
+>   - Continue → call screen → OS prompt. "Not now" does nothing.
+> - **Verified:**
+>   - 17 tests: pure rules; the hook against fakes (sheet once, double tap, refusals); react-native-web renders of the bubble, sheet and history screen (rows, re-initiate with thread, deleted/blocked, empty, error and retry).
+>   - Lint clean apart from the known `@/` resolver noise.
+>   - Android and iOS bundles build.
+>   - **Device testing pending** (testing procedure 1–10).
+
 ### Implementation steps
 1. **Chat thread header** (`src/app/chat/[id].jsx`) → audio and video call icons, passing the existing `conversationId` so the backend can attach the call to the thread.
 2. **Profile screen** (`src/app/profile/[id].jsx`) → a call action, subject to the same authorization rules.
 3. **Call history** — a list view backed by `GET /calls`, showing direction, status, duration, and relative time. Place it in the chat tab or under settings; tapping a row re-initiates.
 4. **Call events in chat** — render the `call`-type message the backend writes (backend Iteration 10) as a distinct bubble: an icon, "Missed call" / "Outgoing call · 4:12", and a tap-to-call-back action. Extend the existing `react-native-gifted-chat` custom message rendering.
+   - Shape: `{ type: 'call', sender: <initiator>, recipient: <callee>, text, call: { callId, callType, status, durationSeconds } }`. Messages without `type` are text.
+   - `text` is a neutral fallback ("Missed video call", "Voice call · 4:12") that older app versions show as a normal bubble. Build the bubble's own copy from `call` and whether the viewer is the sender (e.g. "Outgoing call" vs "Incoming call"), not from `text`.
+   - They arrive live through the existing `newMessage` / `conversationUpdated` socket events.
+   - **Missed-call notifications** arrive as type `MissedCall` with `metadata: { callId, callerId, callType, conversationId? }`. Add a case to `handleRowPress` in `NotificationsScreen.jsx` and to the push tap handler: open the conversation when `conversationId` is present, otherwise the caller's profile. Current app versions ignore unknown types, so nothing breaks before this ships.
 5. **Disable rather than fail.** When `connectionState !== 'connected'`, or the user is blocked, or calling is disabled server-side, the call button is visibly disabled with a reason on tap. A button that always fails is worse than no button.
 6. **Permission pre-flight** — on first-ever call, show a short explanatory sheet before the OS prompt. Permission grant rates are materially higher with context, and a permanent denial is expensive to recover from.
 7. Hide call entry points entirely for blocked users, consistent with how the existing chat handles blocks.
@@ -895,6 +1105,53 @@ Make calls survive the conditions real users actually experience — bad network
 
 ### Prerequisites
 - Iterations 1–11.
+
+> **As implemented (Sept 2026)**
+> - **Network drops (steps 1, edge cases):**
+>   - The SDK already reconnects on network changes (Wi-Fi ↔ cellular included); nothing is added on top of it.
+>   - The badge now counts: "Reconnecting…", then "Reconnecting… 7s".
+>   - The call is given up as **"Call lost"** and ended when recovery takes longer than `RECONNECT_GIVE_UP_MS`. That is 30s, the same as the other side's `REMOTE_DROP_GRACE_MS`, so recovering later would land in a call they've already ended. It is also given up as soon as the SDK reports `reconnecting-failed`.
+>   - While **offline**, the SDK never gives up by itself; `setDisconnectionTimeout` only covers reconnects attempted while online. So the screen times offline itself, from timestamps. A runtime that iOS paused in the background gives up on its first tick after waking, instead of showing a live-looking dead call.
+>   - `setDisconnectionTimeout(30)` is set at join for failures while online.
+>   - `onCurrentCallEnded` now passes a reason: `'left'`, meaning we were dropped, shows "Call lost"; `'ended'` shows "Call ended".
+>   - Helpers in `src/utils/activeCallState.js`: `reconnectState`, `reconnectLabel`.
+> - **Lifecycle (step 2):**
+>   - No new code. The SDK's `<StreamCall>` (its `AppStateListener`) already turns the camera off in the background and back on when the app returns. On Android with `androidKeepCallAlive` it keeps the camera running (the camera foreground service; PiP is Iteration 13).
+>   - Audio keeps running thanks to the `audio`/`voip` background modes, confirmed present in the resolved config.
+>   - The timer already counts from `joinedAt`.
+>   - Force-kill: the call slice isn't persisted, so relaunch starts clean. The backend half is the webhook/sweeper.
+> - **Interruptions (step 3):**
+>   - The SDK syncs mute with CallKit/Telecom but **ignores hold**. `callService` now listens to callingx's `didToggleHoldCallAction` for the live call (e.g. "Hold & Accept" for a phone call on iOS, or Telecom holding us on Android).
+>   - While held, the mic and camera are off and restored exactly afterwards. The screen shows "On hold", disables the mic and camera buttons, and offers **Resume call** (`callingx.setOnHoldCall(cid, false)`).
+>   - Other iOS audio interruptions (alarm, Siri) are recovered by the SDK/WebRTC audio session; the mic button already shows the real device state.
+> - **Crash recovery (step 4) — `src/hooks/useStrandedCallCheck.js`, mounted in `CallProvider`:**
+>   - Runs once per client, 2.5s after connecting (so a cold-start answer from CallKit/Telecom is adopted first).
+>   - `callService.findStrandedCall()` asks `GET /calls?status=active` and loads each Stream call. It skips calls the SDK is already ringing, joining or in, and the live call.
+>   - What happens next (`strandedCallAction`):
+>     - The other person is still in the session → alert **Rejoin / End call**. Rejoin joins, keeps the timer running from `answeredAt`, and opens `/call/[id]`.
+>     - Nobody is left → the call is ended quietly.
+>     - The user is in it on **another device** → left alone.
+>   - **Backend change:** `GET /calls` items now include `stream: { type, id }` (split from `streamCallId`; participants only), with a new spec (57/57).
+> - **Poor quality (step 5):**
+>   - The existing "Poor connection" badge stays.
+>   - After 10s of sustained poor quality in the video layout, the screen asks once: "Video keeps freezing. Switch to audio only?"
+>   - Audio only turns our camera off and turns incoming video off (`call.setIncomingVideoEnabled(false)`), and forces the audio layout. The state is kept in `callService`, so it survives a remount.
+>   - Turning the camera back on leaves audio-only. "Keep video" dismisses the offer for the rest of the call.
+> - **Leaks (step 6):**
+>   - The screen's notice/finish timers are cleared on unmount.
+>   - The incoming screen's close timer is cleared on unmount.
+>   - `watchIncomingCalls` now stops following each ring once it's joined or left; before, every ring kept a subscription until sign-out.
+>   - The call's tracking and hold listener are released on every end path (`releaseCurrent`, idempotent `untrack`).
+>   - The 30-minute memory profile is a device task.
+> - **Error boundary (step 7) — `CallErrorBoundary` around the call stack in `call/_layout.jsx`:**
+>   - Reports via `console.error`. There is **no crash reporter in the app**; plug one in there.
+>   - Then `callService.abandonAfterCrash`: ends a joined call, cancels one ringing out, and declines one ringing in.
+>   - Then clears the store, shows "Call ended", and returns home after 1.5s.
+> - **Verified:**
+>   - 23 tests: pure rules; `callService` against a faked SDK and callingx (stranded lookup, rejoin, hold/resume, audio-only, end reasons, crash abandon, no subscription growth over 20 rings); react-native-web renders of the call screen (reconnect counter and give-up, recovery, SDK give-up, hold, audio-only offer, keep video) and the boundary; the stranded-call hook flows.
+>   - Iteration 11's 17 tests still pass.
+>   - Lint is clean, and the Android and iOS bundles build.
+>   - **Device testing pending** (procedure 1–10, especially Wi-Fi → cellular, airplane 5/15/60s, GSM hold on both platforms, and rejoin after force-kill). Rejoin after a crash joins without a CallKit entry; check that iOS audio routes correctly there.
 
 ### Implementation steps
 1. **Network transition handling** via `@react-native-community/netinfo`:
@@ -970,13 +1227,272 @@ Calls behave predictably under the conditions that actually occur in production.
 
 ---
 
-# Iteration 13 — QA matrix and release readiness
+# Iteration 13 — Minimise, floating call view, and system picture-in-picture
+
+### Goal
+Give the mockup's back chevron a real behaviour: leave the call screen **without leaving the call**. The user can reply to a chat or check a profile mid-call, and return with one tap. When the app is backgrounded during a video call, the call continues in a system picture-in-picture window.
+
+### Prerequisites
+- Iterations 1–12. In particular Iteration 7 step 10: the call object lives in `CallProvider`, not in the screen.
+
+> **As implemented (Sept 2026)**
+> - **Ownership moved to the app root.** The call *object* already lived in `callService`, but the SDK's `<StreamCall>` was mounted by the call screen. Unmounting it (i.e. minimising) runs `useAndroidKeepCallAliveEffect`'s cleanup, which **stops the Android keep-alive foreground service and releases callingx's background task**. It also drops the CallKit/Telecom sync and the camera background handling.
+>   - New **`src/components/call/CallRuntime.jsx`** is mounted once in `src/app/_layout.jsx` *before* the router stack: a sibling, never a wrapper, so the navigation tree can't remount. It renders:
+>     - `<StreamVideo>` whenever there's a client;
+>     - `<StreamCall>` for a joined call;
+>     - a **supervisor**, which moved out of the screen from Iteration 12 and applies wherever the user is: other side ended → "Call ended"; dropped → "Call lost"; own reconnect past 30s → "Call lost" plus hang-up; peer gone past 30s → "Call lost" plus hang-up;
+>     - on iOS, `RTCViewPipIOS` (full-screen, behind every screen) as the PiP source;
+>     - Android auto-enter PiP via `useAutoEnterPiPEffect`, allowed only for joined video calls (`pipAllowed`; audio calls and audio-only get none).
+>   - The screen and the floating view now only *display*. They use the context-only `StreamVideoProvider` / `StreamTheme` / `StreamCallProvider`.
+> - **⚠ Fix for Iterations 9–10:** the SDK registers this device for ring pushes (Android FCM and iOS VoIP; `usePushRegisterEffect`) and forwards network online/offline to the client **only while a `<StreamVideo>` with a connected user is mounted**. It used to be mounted only in `call/_layout.jsx`. So a device that hadn't opened a call screen in a session never registered, and a closed app wouldn't ring. It's now mounted at the root by `CallRuntime`. `call/_layout.jsx` uses the context-only providers, so there's no double registration and no double busy tone.
+> - **Ended state lives in the store:** `activeCall.status = 'ended'` plus `endedLabel` (`markCallEnded`; the first reason wins, so a local hang-up never reads "Call lost").
+>   - The call screen shows the label and closes itself after 1.5s, clearing the call.
+>   - Minimised, the floating view shows it and `CallRuntime` clears it after `ENDED_LINGER_MS` (2s). It never navigates. On Android it also leaves PiP (`callService.exitPictureInPicture`, a native no-op when not in PiP).
+> - **Minimise:** the new back chevron in the top bar and Android back → `router.back()` (or `replace('/')` with no history, e.g. a CallKit cold start). The call stays in the store. The red button is the only way to end it.
+> - **`FloatingCallView` inside `CallOverlay`**, mounted *after* the stack, with touches passing through except on the view itself:
+>   - Shown when `floatingCallVisible`: a joined or just-ended call on any route except `/call/*` (`/calls` history still shows it).
+>   - **Video mode:** a 100×150 draggable tile with the other person's video.
+>   - **Audio mode** (or audio-only): a draggable pill with avatar, name, `CallTimer` from `joinedAt`, mute, and end.
+>   - Tapping it goes to `/call/[id]`.
+>   - Bounds: `floatingBounds` keeps it inside the safe area, clear of the tab bar, and above the keyboard. `DraggablePip` now re-clamps when bounds change, so the keyboard opening pushes it up.
+>   - **Android PiP:** the whole app shrinks into the window, so `CallOverlay` fills it with the other person's video (`useIsInPiPMode`).
+> - **Android PiP config:** `androidPictureInPicture: true` on the Stream plugin in `app.json`. That adds `supportsPictureInPicture` and the config changes, plus `onPictureInPictureModeChanged` / `onUserLeaveHint` overrides. They don't clash with `withCallLockScreenGuard` (which overrides `onPostCreate` / `onNewIntent` / `onStop`). Verified by a throwaway prebuild; see the compile note below. The roadmap's `withCallingPlugin.js` step isn't needed. Closing the PiP window is the SDK's behaviour (`finishAndRemoveTask`): the call continues in the background with the keep-alive notification.
+> - **iOS PiP:** the camera stops in the background (expected). `iOSEnableMultitaskingCameraAccess` needs a restricted Apple entitlement, so it's not enabled.
+> - **Silencing:**
+>   - `VideoPlaybackContext` reports `isAppActive = false` while `activeCall || incomingCall`, which pauses the full-screen feed and video detail.
+>   - `HomeScreen` feed cards also gate on `inCall`.
+>   - Upload and boost previews are already muted.
+> - **Blocking:** `callButtonState({ inCall })` keeps chat, profile and history call buttons visible but disabled with "You're already in a call" (shared `IN_CALL_REASON`). Taps explain why.
+> - **Verified:**
+>   - 12 new tests: pure rules; react-native-web renders of `CallRuntime` (StreamVideo always, StreamCall and iOS PiP source only when joined, PiP on only for video, supervisor end reasons, linger clear, offline give-up with no screen), the screen (chevron and Android back minimise, red button ends and clears, supervisor-ended close), the overlay (pill mute/end/return, video tile, hidden on call screens, Android PiP content) and playback silencing.
+>   - Earlier suites re-run: Iteration 11 17/17 and Iteration 12 17/17 (the screen's own give-up case is superseded by the supervisor).
+>   - Lint is clean, and the Android and iOS bundles build.
+>   - **Device testing pending** (procedure 1–10).
+
+### Implementation steps
+1. **Back chevron and Android back on `/call/[id]` → minimise.** `router.back()` (or to the tab the user came from) while the call stays joined. Show the chevron now (Iteration 7 hid it). The red button remains the only way to end the call.
+2. **`FloatingCallView`** — mount once in `src/app/_layout.jsx` above the router stack. Render it only when `activeCall` is set *and* the current route is not `/call/[id]`:
+   - **Video mode:** a small draggable tile (~100×150) showing the remote video, snapping to the nearest corner and clamped to safe areas and above the tab bar. Reuse the Iteration 7 PiP drag code.
+   - **Audio mode:** a compact pill with the avatar, name, running `CallTimer`, a mute button, and a red end button.
+   - Tap → `router.push('/call/[id]')`. The timer keeps counting from the join timestamp.
+3. **System picture-in-picture when the app is backgrounded in a video call.**
+   - **Android:** enable `supportsPictureInPicture` on the main activity via `plugins/withCallingPlugin.js`, and use the Stream SDK's Android PiP support to enter PiP on background.
+   - **iOS:** enable the Stream SDK's iOS PiP support on the call content (it relies on the `audio` background mode from Iteration 2).
+   - The SDK's PiP API names have changed between versions; confirm them against the version pinned in Iteration 1 rather than copying examples.
+   - Audio calls do not need PiP; audio already continues in the background.
+4. **Silence the rest of the app while minimised.** Feed and profile videos (`expo-video`, `VideoPlaybackContext`) must stay paused or muted while `activeCall` is set, otherwise the user hears both. Resume normal behaviour when the call ends.
+5. **Block conflicting actions while minimised.** Every call button (chat header, profile, history, call bubbles) is disabled with "You're already in a call" while `activeCall` is set. The backend returns `409 ALREADY_IN_CALL` anyway; this keeps the user from hitting it.
+6. **Call ends while minimised** (remote hang-up, network loss, block) → the floating view shows "Call ended" for ~2 seconds, then disappears. Do not navigate the user away from what they are doing.
+
+### Files / modules affected
+- `src/components/call/FloatingCallView.jsx` *(new)*
+- `src/app/_layout.jsx` (mount)
+- `src/app/call/[id].jsx` (chevron, back handler)
+- `src/context/CallProvider.jsx`
+- `plugins/withCallingPlugin.js` (Android PiP flag)
+- `src/context/VideoPlaybackContext*` (pause while in a call)
+
+### API / event flow
+```
+Call screen ──chevron / Android back──> router.back()
+                    └──> activeCall still joined ──> FloatingCallView renders
+                              tap ──> router.push('/call/<id>')
+
+App backgrounded (video mode) ──> system PiP window (SDK)
+App foregrounded              ──> PiP closes, previous screen or call screen restored
+
+Call ends while minimised ──> "Call ended" on the floating view ──> hidden after 2s
+```
+No new backend calls.
+
+### Error and edge-case handling
+- **Call owned by the screen instead of the provider** → minimising unmounts the screen and drops the call. This is why Iteration 7 moved ownership; verify it before building anything here.
+- **Floating view covers important UI** (chat input, keyboard, tab bar) → keep it above the keyboard and tab bar, and draggable to any corner.
+- **Deep link or notification tap while minimised** → navigate normally; the floating view stays on top.
+- **Incoming second call while minimised** → auto-rejected as busy, same as Iteration 6.
+- **iOS camera while backgrounded** → iOS stops camera capture in the background, so the other side sees your avatar (Iteration 7 fallback) until you return. Expected; do not treat it as a bug.
+- **Android PiP refused** (user disabled it for the app in system settings) → the call continues as audio in the background; nothing breaks.
+- **Logout while minimised** → Iteration 4's end-then-disconnect path still applies.
+
+### Testing procedure
+1. Video call → tap the chevron → land on the previous screen with the floating tile showing live remote video; audio uninterrupted on both sides.
+2. Drag the tile to every corner → it stays visible, clear of the tab bar and keyboard.
+3. Tap the tile → back in the full call screen; the timer shows the correct elapsed time.
+4. Audio call → minimise → the pill shows the timer; mute and end on the pill both work.
+5. Android hardware back on the call screen → minimises; it does not end the call.
+6. Open a feed video while minimised → it does not play audio over the call.
+7. Try to start another call while minimised → the button is disabled with "You're already in a call".
+8. Remote hangs up while minimised → "Call ended" on the floating view, gone after 2s, no navigation.
+9. Video call → home button → system PiP on Android and iOS; return → PiP closes and the call screen is correct.
+10. Force-kill while minimised → Iteration 12's force-kill behaviour holds (no stuck state).
+
+### Expected result
+Users can leave the call screen and come back without ever dropping the call, on both platforms.
+
+### Completion criteria
+- [ ] Chevron and Android back minimise, never end
+- [ ] Floating view for video and audio, draggable and tappable to return
+- [ ] System PiP working on both platforms for video calls
+- [ ] Other media silenced while a call is active
+- [ ] New calls blocked while one is active
+- [ ] Remote end while minimised handled without hijacking navigation
+
+---
+
+# Iteration 14 — Call settings, history management, and post-call actions
+
+### Goal
+Build the user-facing controls around calling that the mockups do not show: who can call me, managing call history, the missed-call badge, calling back from a notification, rating a call, and reporting or blocking from a call.
+
+### Prerequisites
+- Iterations 1–13 (11 for history and entry points).
+- **Backend Iteration 12** (settings, `can-call`, history hide, unseen count, call reports, feedback).
+
+> **As implemented (Sept 2026)**
+> - **Backend changes made here:**
+>   1. `recordStats` wrote `metadata.quality.<userId>` on every report. The post-call rating arrives separately from the hang-up stats, so it **wiped the jitter/reconnect figures**. Quality is now written only when a quality field is present (+2 specs).
+>   2. MissedCall pushes carry APNs `aps.category = "MISSED_CALL"` (`PUSH_CATEGORY_BY_TYPE`, new `push-notification.payload.spec.ts`).
+> - **"Who can call me":**
+>   - `src/app/call-privacy.jsx` — flat, like `blocked-users.jsx`, rather than `settings/`. Linked as **Calls** in Settings → Account.
+>   - Radio choices come from `CALL_PRIVACY_OPTIONS`.
+>   - Saved optimistically; a failed save rolls back to what the server has and shows a toast. There's a load-error state with retry.
+> - **Server pre-flight — `useCanCall`:**
+>   - Asks on screen focus; cached 60s per signed-in user and callee; `refresh()` after follow/unfollow on the profile.
+>   - `callButtonState({ preflightCode, peerName })`:
+>     - `USER_UNAVAILABLE` → hidden.
+>     - `CALLS_NOT_ACCEPTED` / `NOT_CONNECTED` / `CALLEE_UNSUPPORTED` → disabled, with the outgoing screen's own `startErrorCopy` shown on tap (`startCall({ disabledReason })`).
+>     - Anything else (busy, rate-limited, unknown), or a failed check → enabled.
+>   - Used on the chat header, chat bubbles and profile. The outgoing screen already handled those codes (Iteration 5).
+> - **History management:**
+>   - Long-press a row (or the accessibility action) → "Delete this call?" ("…{name} still sees it") → `DELETE /calls/:id`, optimistic, and put back in place with a toast on failure.
+>   - Trash icon → "Clear call history?" ("clears your list only") → `DELETE /calls`, optimistic with rollback.
+>   - No swipe: the app root has no gesture-handler root outside the call screens.
+> - **Missed-call badge:**
+>   - `useUnseenCallCount`, mounted in `CallProvider`, fetches when calling connects, when the app comes to the foreground, and when a MissedCall push arrives in the foreground (new `addReceivedListener` in the push service).
+>   - `MissedCallBadge` shows it on the Messages header's call-history icon and on the **Inbox** tab.
+>   - Opening history sends `POST /calls/seen` and zeroes it. It's reset at sign-out.
+> - **"Call back":**
+>   - The `MISSED_CALL` category (Call back button, opens the app) is registered in the push service's `initialize`.
+>   - **iOS:** shown on the system notification via the backend category.
+>   - **Android:** only on the notification the app draws while open (`categoryIdentifier`). System-drawn FCM notifications can't carry buttons, and switching to data-only would risk losing missed-call notifications on the aggressive-OEM phones from Iteration 10. The in-app notifications list also has a **Call back** button on missed-call rows (through `useStartCall`).
+>   - Taps are routed by `src/utils/notificationOpen.js`, extracted from `_layout.jsx`:
+>     - The action arrives via expo (`fromResponse`, which reads FCM payloads from `trigger.payload`), including cold start via `getLastNotificationResponseAsync`.
+>     - A plain missed-call open waits 400ms and stands down if "Call back" was handled for the same `notificationId`, so the user lands in the call, not the chat.
+>     - "Call back" is refused while a call is up.
+> - **Post-call sheet:**
+>   - `callService.onCallFinished` reports each *answered* call once, however it ends ('local' / 'ended' / 'left').
+>   - `usePostCallTrigger` turns it into `store.postCall` with `postCallSummary`: at least 10s, the store's call, `askRating` for a random 20%.
+>   - `PostCallHost` (root, after `CallOverlay`) shows `PostCallSheet` only once no call is on screen:
+>     - "Call ended · 4:12";
+>     - Call again, and Message (starts a conversation when the call had no thread);
+>     - Report (`ReportModal`, `contentType: 'call'`, rendered inside the sheet's Modal; disabled once reported);
+>     - the sampled 1–5 stars, with issue chips below 5, sent via `POST /calls/:id/stats`.
+>   - A ring or a different call discards it. The outgoing screen now records `conversationId` on the active call.
+> - **Report / block in call:**
+>   - A "⋯" in the call screen's top bar → Report (`ReportModal`, call) or **Block {name}** (confirm) → `POST /moderation/block/:userId`.
+>   - On success: added to `blockedUserIds`, the call ended locally too, the post-call sheet dropped, and home. A failure keeps the call and says so.
+> - **Verified:**
+>   - 23 new tests: pure rules (pre-flight mapping, badge, call-back route, post-call summary, notification routing and de-dup); `callService` REST wrappers and `onCallFinished`; push service category, `fromResponse`, cold-start action and received listener; react-native-web renders of the privacy screen, history management, `useCanCall`, badge, trigger, `PostCallHost` / `PostCallSheet`, and the in-call report and block menu.
+>   - Backend 60 + 2 specs; `src/` compiles.
+>   - Earlier app suites all pass (Iteration 11's history fakes updated for `markSeen`).
+>   - Lint is clean, and the Android and iOS bundles build.
+>   - **Device testing pending** (procedure 1–10). In particular the iOS "Call back" button from a locked phone and from a closed app, since two notification libraries share the iOS delegate.
+
+### Implementation steps
+1. **"Who can call me"** — `src/app/settings/call-privacy.jsx`, linked from the existing privacy/settings screen: *Everyone* / *People who follow me back* (default) / *No one*. `GET` / `PATCH /calls/settings`. Update optimistically and roll back on failure.
+2. **Upgrade the Iteration 11 button states to the server's pre-flight.** Chat header and profile call buttons call `GET /calls/can-call/:userId` on screen focus (cache ~60s per user) and map the result:
+   | Code | Button | Copy on tap |
+   |---|---|---|
+   | allowed | enabled | — |
+   | `CALLS_NOT_ACCEPTED` | disabled | "{name} isn't accepting calls" |
+   | `NOT_CONNECTED` | disabled | "You can call {name} once you follow each other" |
+   | `CALLEE_UNSUPPORTED` | disabled | "{name} needs to update Boostra to receive calls" |
+   | `CALLEE_BUSY` | enabled | handled by the outgoing screen at call time |
+   | `USER_UNAVAILABLE` | hidden | — (never reveals a block) |
+   The outgoing screen (Iteration 5) must also handle `CALLS_NOT_ACCEPTED`, `NOT_CONNECTED` and `CALLEE_UNSUPPORTED` from `POST /calls`, because the pre-flight can go stale.
+3. **History management** in the Iteration 11 history list:
+   - Swipe (or long-press) a row → **Delete** → `DELETE /calls/:id`. Remove the row optimistically.
+   - **Clear call history** in the list's menu, behind a confirmation → `DELETE /calls`.
+   - Copy makes clear this only affects the user's own list.
+4. **Missed-call badge** — fetch `GET /calls/unseen-count` on app foreground and whenever a missed-call push arrives; show it on the history entry point (and on the chat tab if history lives there). Call `POST /calls/seen` when the history screen opens.
+5. **"Call back" from the missed-call notification** — add a **Call back** action button (iOS notification category, Android action) through the existing push service. It opens `/call/outgoing` with `callerId` and `callType` from the notification metadata (backend Iteration 12). Tapping the notification body still opens the conversation.
+6. **Post-call sheet** — `PostCallSheet`, shown after an answered call ends (not after missed, declined, or calls under ~10 seconds):
+   - "Call ended · 4:12", then **Call again**, **Message**, and **Report**.
+   - An optional 1–5 rating with quick issue chips (audio, video, dropped, echo). Ask on roughly 1 in 5 calls, not every call, to avoid fatigue; send with the Iteration 7 stats via `POST /calls/:id/stats`.
+   - Dismissible with one tap or swipe; it never blocks the app.
+7. **Report and block from a call** — a "⋯" menu in the call screen's top bar (and **Report** in the post-call sheet):
+   - **Report** → reason picker (existing `ReportReason` values) → `POST /moderation/reports` with `contentType: 'call'`, `contentId: callId`.
+   - **Block** → confirmation → `POST /moderation/block/:userId`. The backend ends the live call (backend Iteration 7); show "Call ended" and return home.
+   - Reuse the existing report UI for videos and users if there is one, rather than building a second one.
+
+### Files / modules affected
+- `src/app/settings/call-privacy.jsx` *(new)*, settings entry link
+- `src/components/call/PostCallSheet.jsx` *(new)*
+- `src/app/call/[id].jsx` (overflow menu), `src/app/call/outgoing.jsx` (new error codes)
+- Call history screen and entry points from Iteration 11
+- `src/services/callService.js` (settings, `canCall`, `hideCall`, `clearHistory`, `getUnseenCount`, `markSeen`)
+- `src/services/pushNotificationService.js` (Call back action)
+
+### API / event flow
+```
+Settings ──GET/PATCH /calls/settings──> { callPrivacy }
+
+Chat / profile focus ──GET /calls/can-call/:userId──> { allowed, code } ──> button state + copy
+
+History ──swipe──> DELETE /calls/:id      ──> row removed
+        ──menu───> DELETE /calls          ──> list emptied
+        ──open───> POST /calls/seen       ──> badge cleared
+Foreground / missed push ──> GET /calls/unseen-count ──> badge
+
+Missed-call notification ──"Call back"──> /call/outgoing { callerId, callType }
+
+Answered call ends ──> PostCallSheet ──rating──> POST /calls/:id/stats
+                                     ──Report──> POST /moderation/reports { contentType: 'call' }
+In-call ⋯ ──Block──> POST /moderation/block/:userId ──> backend ends the call
+```
+
+### Error and edge-case handling
+- **Privacy save fails** → roll back the selection and show a toast; never display a setting that is not in effect.
+- **`can-call` fails or times out** → leave the button enabled and let `POST /calls` decide. The pre-flight must never make calling *less* available than the backend allows.
+- **Block leakage** → `USER_UNAVAILABLE` hides the button with no explanation, matching existing chat behaviour.
+- **"Call back" on a notification for a user who has since blocked you, or whose privacy changed** → the outgoing screen shows the normal error copy.
+- **Post-call sheet over an incoming call** → an incoming call always wins; dismiss the sheet.
+- **Report submitted twice** → disable the button after the first submit.
+- **Offline deletes** → roll back the optimistic removal and show a toast.
+
+### Testing procedure
+1. Set *No one* → another user's call button for you is disabled with "isn't accepting calls"; set *Everyone* → a non-connected user can call you.
+2. Callee on an old build (never fetched a token) → caller sees "needs to update Boostra".
+3. Blocked user → no call button, no explanation.
+4. Change privacy while the caller's screen is open → tapping call shows the correct error from `POST /calls`.
+5. Delete one history row → gone after refresh; still in the other user's history. Clear all → empty state.
+6. Two missed calls → badge 2; open history → badge clears; another missed call → badge 1.
+7. Missed-call notification → **Call back** starts a call of the same type; tapping the body opens the chat.
+8. Answered call over 10s → post-call sheet; missed or declined → no sheet; rating reaches the backend.
+9. Report from the sheet and from the in-call menu → report visible in the admin queue with call details.
+10. Block mid-call → the call ends on both sides; the blocked user's buttons disappear.
+
+### Expected result
+Users control who can reach them, manage their own call history, and can act on a call afterwards — rate it, call back, report or block.
+
+### Completion criteria
+- [ ] "Who can call me" setting works and survives app restart
+- [ ] Call buttons reflect `can-call`, with correct copy for every code and no block leakage
+- [ ] Delete and clear history work and are per user
+- [ ] Missed-call badge accurate and cleared on view
+- [ ] Call back from the notification works on both platforms
+- [ ] Post-call sheet shown only after answered calls, rating sampled
+- [ ] Report and block reachable from the call
+
+---
+
+# Iteration 15 — QA matrix and release readiness
 
 ### Goal
 Systematically verify the feature across the device and state matrix, and prepare the release.
 
 ### Prerequisites
-- Iterations 1–12 complete and individually verified.
+- Iterations 1–14 complete and individually verified.
 - **All backend iterations complete.**
 
 ### Implementation steps
@@ -994,7 +1510,8 @@ Systematically verify the feature across the device and state matrix, and prepar
    Each cell: ring → answer → 30s conversation → hang up → verify the record, history, and chat event.
 
 2. **Cross-platform pairs** — iOS→Android and Android→iOS, in both directions, both call types. Codec and routing differences surface here and nowhere else.
-3. **Outcome coverage** — for each platform pair: answered, declined, cancelled by caller, ring timeout, busy, network-lost. Verify the backend record and the user-visible copy for each.
+3. **Outcome coverage** — for each platform pair: answered, declined, cancelled by caller, ring timeout, busy, network-lost, answered on another device, callee on an old build. Verify the backend record and the user-visible copy for each.
+   Also on each platform: minimise and return, system PiP, and the post-call sheet.
 4. **Accessibility** — every control needs an accessibility label; verify with VoiceOver and TalkBack, and check contrast on the control bar against the video background (white icons over arbitrary video is a real contrast problem — the mockup's translucent dark pill is the mitigation; confirm it is implemented).
 5. **Build verification** — staging builds for both platforms via the existing EAS profiles, installed from TestFlight and Play internal testing, not sideloaded. **TestFlight uses production APNs**; this is where an APNs environment mismatch appears if one exists. It must be tested before release, not after.
 6. **Store submission preparation:**
@@ -1022,8 +1539,8 @@ Full end-to-end, all paths, all platforms. No new flows.
 ### Testing procedure
 1. Execute all 18 matrix cells; record pass/fail per cell with device and OS version.
 2. Cross-platform pairs, both directions, both call types.
-3. All six outcomes per platform pair.
-4. VoiceOver and TalkBack navigation of all three call screens.
+3. All eight outcomes per platform pair.
+4. VoiceOver and TalkBack navigation of all three call screens, the floating call view, and the post-call sheet.
 5. Install staging builds from TestFlight and Play internal testing → repeat the killed-app ring test on both. Non-negotiable gate.
 6. Verify existing features are unbroken: chat, push, video playback, Google Sign-In, in-app purchases.
 7. Toggle `CALLING_ENABLED` off → the client hides calling cleanly with no crash.
@@ -1035,7 +1552,8 @@ A verified, documented feature ready for staged rollout.
 ### Completion criteria
 - [ ] All matrix cells passed, or failures documented as accepted limitations
 - [ ] Cross-platform calling verified in both directions
-- [ ] All six outcomes verified per platform
+- [ ] All eight outcomes verified per platform
+- [ ] Minimise, system PiP, and post-call sheet verified on both platforms
 - [ ] Accessibility verified with VoiceOver and TalkBack
 - [ ] **Killed-app ringing verified from a TestFlight build**, not just a dev build
 - [ ] No regression in chat, push, playback, sign-in, or purchases
@@ -1060,12 +1578,15 @@ A verified, documented feature ready for staged rollout.
             │                   ├── 10 (Android full-screen)
             │                   ├── 11 (entry points)
             │                   └── 12 (resilience)
-            │                        └── 13 (QA + release)
+            │                        ├── 13 (minimise + PiP)
+            │                        └── 14 (settings, history mgmt, post-call)
+            │                             └── 15 (QA + release)
 ```
 
 **Demoable in-app call:** Iterations 1 → 8.
 **Real calling product:** add 9 and 10.
-**Shippable:** all thirteen.
+**Complete flow:** add 11 → 14.
+**Shippable:** all fifteen.
 
 ## Backend coupling
 
@@ -1077,7 +1598,9 @@ A verified, documented feature ready for staged rollout.
 | 9 | Iteration 6 (APNs VoIP provider) |
 | 10 | Iteration 6 (Firebase provider) |
 | 11 | Iterations 4, 10 (authorization, history) |
-| 13 | All |
+| 12 | Iteration 10 (`GET /calls?status=active` for crash-rejoin) |
+| 14 | Iteration 12 (settings, `can-call`, history hide, unseen count, call reports) |
+| 15 | All |
 
 Backend Iterations 1–7 should be complete before frontend Iteration 6. The two roadmaps can otherwise proceed in parallel.
 
@@ -1100,7 +1623,9 @@ Backend Iterations 1–7 should be complete before frontend Iteration 6. The two
 | 9 (iOS CallKit) | 4–7 days — **the highest-variance item in the project** |
 | 10 (Android) | 3–5 days |
 | 11–12 (entry points + resilience) | 4–6 days |
-| 13 (QA + release) | 3–4 days |
-| **Total** | **~5–7 weeks** for one experienced React Native engineer |
+| 13 (minimise + PiP) | 3–4 days — PiP varies by SDK version and platform |
+| 14 (settings, history mgmt, post-call) | 3–4 days |
+| 15 (QA + release) | 3–4 days |
+| **Total** | **~6–8 weeks** for one experienced React Native engineer |
 
-Iteration 1 is where the estimate is won or lost. If New Architecture or static frameworks force patches or a fallback to `expo-callkit-telecom`, add a week. Doing that iteration first, on real hardware, is the entire reason it is sequenced first.
+Iteration 1 is where the estimate is won or lost. If New Architecture or static frameworks force patches or a fallback from `callingx` to `expo-callkit-telecom`, add a week. Doing that iteration first, on real hardware, is the entire reason it is sequenced first.

@@ -56,6 +56,34 @@ export class User extends Document {
   @Prop()
   bannedAt?: Date;
 
+  // Call-specific moderation, separate from a full ban: the user keeps the app
+  // but cannot place calls.
+  @Prop({ default: false })
+  callingRestricted: boolean;
+
+  // Set when this user's app fetches a calling token — proof they run a build
+  // that can answer. Callers get "needs to update" instead of a silent ring.
+  @Prop()
+  callingCapableAt?: Date;
+
+  // Who may call this user: 'everyone' | 'mutual_follows' | 'nobody'.
+  @Prop({ type: String, enum: ['everyone', 'mutual_follows', 'nobody'], default: 'mutual_follows' })
+  callPrivacy: 'everyone' | 'mutual_follows' | 'nobody';
+
+  // The one install (the app's X-Device-Id) that places and receives this
+  // user's calls. A user may be signed in on several devices, but only this
+  // one rings and may call; the device used most recently claims it
+  // (POST /calls/device). Unset → no preference (every device rings).
+  @Prop()
+  callingDeviceId?: string;
+
+  @Prop()
+  callingDeviceClaimedAt?: Date;
+
+  // Missed calls after this count toward the missed-call badge.
+  @Prop()
+  callsSeenAt?: Date;
+
   @Prop({ select: false })
   refreshToken?: string;
 

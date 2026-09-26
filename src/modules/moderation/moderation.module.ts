@@ -6,6 +6,7 @@ import { Report, ReportSchema } from '../../database/schemas/report/report.schem
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
 import { Comment, CommentSchema } from '../comments/comment.schema';
+import { CallModule } from '../call/call.module';
 
 @Module({
   imports: [
@@ -15,6 +16,8 @@ import { Comment, CommentSchema } from '../comments/comment.schema';
       { name: User.name, schema: UserSchema },
       { name: Comment.name, schema: CommentSchema },
     ]),
+    // A new block ends any live call between the two users.
+    CallModule,
   ],
   controllers: [ModerationController],
   providers: [ModerationService],

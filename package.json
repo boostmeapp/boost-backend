@@ -46,6 +46,7 @@
     "@nestjs/serve-static": "^5.0.4",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.28",
+    "@stream-io/node-sdk": "^0.8.8",
     "@types/pdfkit": "^0.17.6",
     "bcrypt": "^6.0.0",
     "bull": "^4.16.5",

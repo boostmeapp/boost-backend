@@ -13,6 +13,7 @@ import { ENV } from './config';
 import { LinksService } from './modules/links/links.service';
 import { AllExceptionsFilter } from './common/filters';
 import { LoggingInterceptor } from './common/interceptors';
+import { jsonWithRawBody } from './common/middleware/json-with-raw-body';
 
 async function bootstrap() {
   // Check environment before ENV init
@@ -74,7 +75,8 @@ async function bootstrap() {
   });
 
   // Request body size limits for security
-  app.use(require('express').json({ limit: '10mb' }));
+  // Webhook routes keep the exact request bytes for signature verification.
+  app.use(jsonWithRawBody([`/${ENV.API_PREFIX}/calls/webhook`], '10mb'));
   app.use(require('express').urlencoded({ limit: '10mb', extended: true }));
 
   // The page a shared link lands on. Registered as middleware, ahead of Nest's

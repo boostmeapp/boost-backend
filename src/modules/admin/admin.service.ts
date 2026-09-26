@@ -24,6 +24,7 @@ import { RewardService } from '../reward/reward.service';
 import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
 import { TransactionStatus } from '../../database/schemas/transaction/transaction.schema';
 import { ResolveReportDto, ResolveAction } from './dto/resolve-report.dto';
+import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
 
 // 24h review SLA per App Store Guideline 1.2
 const SLA_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +41,7 @@ export class AdminService {
     private transactionService: TransactionService,
     private boostService: BoostService,
     private rewardService: RewardService,
+    private callAccountCleanup: CallAccountCleanupService,
   ) {}
 
   async getAllUsers(): Promise<User[]> {
@@ -54,6 +56,8 @@ export class AdminService {
     }
 
     await this.userModel.findByIdAndDelete(userId).exec();
+    // Ends live calls, removes them from Stream, strips per-user call data. Never throws.
+    await this.callAccountCleanup.onUserDeleted(userId);
 
     return {
       message: `User ${user.email} has been permanently deleted`,

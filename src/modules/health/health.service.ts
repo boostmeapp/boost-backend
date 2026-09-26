@@ -3,6 +3,7 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import Redis from 'ioredis';
 import { ConfigService } from '@nestjs/config';
+import { StreamVideoService } from '../call/stream-video.service';
 
 export interface HealthCheckResult {
   status: 'ok' | 'degraded' | 'error';
@@ -12,6 +13,7 @@ export interface HealthCheckResult {
     database?: HealthCheck;
     redis?: HealthCheck;
     memory?: HealthCheck;
+    stream?: HealthCheck;
   };
 }
 
@@ -31,6 +33,7 @@ export class HealthService {
   constructor(
     @InjectConnection() private readonly mongoConnection: Connection,
     private readonly configService: ConfigService,
+    private readonly streamVideoService: StreamVideoService,
   ) {
     // Initialize Redis client for health checks
     this.redisClient = new Redis({
@@ -105,6 +108,26 @@ export class HealthService {
   }
 
   /**
+   * Check Stream Video (calling) reachability with an authenticated request.
+   * Only degrades overall health — calling being down must not take out the API.
+   */
+  async checkStream(force = false): Promise<HealthCheck> {
+    const s = await this.streamVideoService.getStatus(force);
+
+    return {
+      status: s.enabled && s.reachable ? 'up' : 'down',
+      responseTime: s.responseTime ?? undefined,
+      message: s.enabled ? (s.detail ?? undefined) : `Calling disabled: ${s.detail}`,
+      details: {
+        enabled: s.enabled,
+        appId: s.appId,
+        checkedAt: s.checkedAt,
+        push: s.push,
+      },
+    };
+  }
+
+  /**
    * Check memory usage
    */
   private checkMemory(): HealthCheck {
@@ -175,6 +198,7 @@ export class HealthService {
       database: await this.checkDatabase(),
       redis: await this.checkRedis(),
       memory: this.checkMemory(),
+      stream: await this.checkStream(),
     };
 
     let status: 'ok' | 'degraded' | 'error' = 'ok';
@@ -185,7 +209,10 @@ export class HealthService {
       checks.redis.status === 'down'
     ) {
       status = 'error';
-    } else if (checks.memory.status === 'down') {
+    } else if (
+      checks.memory.status === 'down' ||
+      checks.stream.status === 'down'
+    ) {
       status = 'degraded';
     }
 

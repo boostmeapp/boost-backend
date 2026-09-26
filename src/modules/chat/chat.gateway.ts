@@ -214,4 +214,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(`editMessage error: ${err.message}`);
     }
   }
+
+  /**
+   * Push a server-created message (e.g. a call event) to an open thread and
+   * refresh both participants' conversation lists — the same events a
+   * user-sent message produces, so clients need no new socket handling.
+   */
+  broadcastMessage(conversationId: string, message: unknown, userIds: string[]) {
+    this.server.to(`conv_${conversationId}`).emit('newMessage', message);
+    for (const userId of userIds) {
+      this.server.to(`user_${userId}`).emit('conversationUpdated', {
+        conversationId,
+        lastMessage: message,
+      });
+    }
+  }
 }

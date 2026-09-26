@@ -37,6 +37,8 @@ import { ModerationModule } from './modules/moderation/moderation.module';
 import { CoinsModule } from './modules/coins/coins.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { SupportModule } from './modules/support/support.module';
+import { CallModule } from './modules/call/call.module';
+import { CallAccountModule } from './modules/call/call-account.module';
 
 @Module({
   imports: [
@@ -122,6 +124,8 @@ ConfigModule.forRoot({
     CoinsModule,
     AdminModule,
     ChatModule,
+    CallModule,
+    CallAccountModule,
     SupportModule,
   ],
   controllers: [AppController],

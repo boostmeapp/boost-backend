@@ -16,6 +16,7 @@ import {
 } from '../../database/schemas/verification/verification-token.schema';
 import { MailerService } from '../mailer/mailer.service';
 import { ENV } from '../../config';
+import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
 
 const OTP_TTL_MINUTES: Record<VerificationTokenType, number> = {
   [VerificationTokenType.EMAIL_VERIFY]: 10,
@@ -35,6 +36,7 @@ export class VerificationService {
     @InjectModel(VerificationToken.name)
     private readonly tokenModel: Model<VerificationToken>,
     private readonly mailerService: MailerService,
+    private readonly callAccountCleanup: CallAccountCleanupService,
   ) {}
 
   // ----- Email verification -----
@@ -196,6 +198,8 @@ export class VerificationService {
     const email = user.email;
     await this.tokenModel.deleteMany({ user: new Types.ObjectId(user.id) });
     await this.userModel.findByIdAndDelete(user.id);
+    // Ends live calls, removes them from Stream, strips per-user call data. Never throws.
+    await this.callAccountCleanup.onUserDeleted(user.id);
 
     await this.mailerService.sendAccountDeletedNotice(email).catch(() => {});
     return { deleted: true };

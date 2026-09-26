@@ -60,6 +60,9 @@ src/database/schemas/call/
 | `STREAM_API_KEY` | Iteration 1 | Public app key, also shipped to client |
 | `STREAM_API_SECRET` | Iteration 1 | Server-only; signs user tokens, verifies webhooks |
 | `STREAM_APP_ID` | Iteration 1 | Dashboard reference / logging |
+| `STREAM_APN_PROVIDER_SANDBOX` | Iteration 6 | Stream APNs provider name for development builds (default `boostra-voip-dev`) |
+| `STREAM_APN_PROVIDER_PRODUCTION` | Iteration 6 | Stream APNs provider name for staging/TestFlight/store builds (default `boostra-voip-prod`) |
+| `STREAM_FIREBASE_PROVIDER` | Iteration 6 | Stream Firebase provider name (default `boostra-android`) |
 | `STREAM_WEBHOOK_ENABLED` | Iteration 8 | Kill switch for webhook ingestion |
 | `CALL_RING_TIMEOUT_SECONDS` | Iteration 9 | Default `45` |
 | `CALL_MAX_PER_HOUR` | Iteration 11 | Per-caller abuse cap, default `30` |
@@ -295,11 +298,11 @@ Decide, server-side, whether user A may call user B. This is the core piece of b
    1. **Self-call** — caller `===` callee → reject `CANNOT_CALL_SELF`.
    2. **Callee exists and is active** — not deleted, not banned → `USER_UNAVAILABLE`.
    3. **Block in either direction** — query the moderation/block source used by `chat.service.ts`. Reject `BLOCKED`. Return the *same* generic message in both directions so a blocked user cannot detect that they are blocked.
-   4. **Relationship requirement** — this is a product decision; implement it as a configurable policy so it can change without a rewrite. Recommended default: an **existing conversation** or a **mutual follow**. Reject `NOT_CONNECTED`.
+   4. **Relationship requirement** — this is a product decision; implement it as a configurable policy so it can change without a rewrite. **Decided: mutual follow only** — both users follow each other. Message history does not count. Reject `NOT_CONNECTED`.
    5. **Caller not banned from calling specifically** — a moderation flag separate from a full ban, for call-specific abuse. Reject `CALLING_RESTRICTED`.
 3. Put the policy behind a small, named strategy object rather than inline `if`s, so the rule is readable and testable:
    ```ts
-   const CALL_POLICY = { requireMutualFollowOrConversation: true };
+   const CALL_POLICY = { requireMutualFollow: true };
    ```
 4. Reuse the block-list lookup from `chat.service.ts` rather than reimplementing it — a divergence between "can message" and "can call" is a moderation hole.
 
@@ -316,6 +319,7 @@ Internal only. Consumed by Iteration 5.
 - **Callee deleted between check and ring** → tolerable race; the ring simply goes nowhere and times out via Iteration 9.
 - **Information leakage** → never reveal *why* in a way that discloses block state. `BLOCKED` and `USER_UNAVAILABLE` should present identically to the client.
 - **Policy too strict at launch** → keep the flag; you will want to relax it.
+- **Per-user control** → this policy is the app-wide default. Iteration 12 layers a per-user `callPrivacy` setting on top of it; keep the check order here (self → exists → block → relationship → restricted) so that layer slots in after the block check.
 
 ### Testing procedure
 Unit tests with mocked models, one per branch:
@@ -325,8 +329,8 @@ Unit tests with mocked models, one per branch:
 4. Callee blocked caller → `BLOCKED`, identical response body to the above.
 5. No relationship, policy on → `NOT_CONNECTED`.
 6. No relationship, policy off → passes.
-7. Existing conversation → passes.
-8. Mutual follow, no conversation → passes.
+7. Mutual follow → passes.
+8. One-way follow (either direction), or messages exchanged without a mutual follow → `NOT_CONNECTED`.
 
 ### Expected result
 A single, fully unit-tested gate that every call initiation must pass.
@@ -435,7 +439,7 @@ Configure the push providers in Stream so an incoming call reaches a device whos
 
 ### Prerequisites
 - Iteration 5.
-- **Apple:** an APNs **VoIP Services certificate** (`.p8` auth key or `.p12`) for bundle ID `com.boostra.mobile`, created in the Apple Developer portal. This is a *separate credential from your FCM/APNs push key* — PushKit VoIP pushes do not use the standard APNs certificate.
+- **Apple:** an APNs **`.p8` auth key** for team `MYJNL7NN38` (bundle ID `com.boostra.mobile`). A token-based `.p8` key sends VoIP pushes too and never expires, so an existing APNs key can be reused. Only the older certificate route needs a *separate* `.p12` VoIP Services certificate, and it expires yearly; avoid it.
 - **Android:** the Firebase service account JSON for the project already backing `google-services.json`.
 
 ### Implementation steps
@@ -445,10 +449,11 @@ Configure the push providers in Stream so an incoming call reaches a device whos
    - Note the exact provider *names*; the client passes them when registering device tokens.
 2. Expose the provider names to the client. Add them to the `POST /calls/token` response:
    ```json
-   { "apiKey": "...", "token": "...", "push": { "apnProviderName": "boostra-voip-dev", "firebaseProviderName": "boostra-android" } }
+   { "apiKey": "...", "token": "...", "push": { "apnsEnvironment": "production", "apnProviderName": "boostra-voip-prod", "firebaseProviderName": "boostra-android" } }
    ```
    This keeps environment-specific names out of the app bundle — the same binary works against staging and production.
-3. Select the provider name by environment on the server (`ENV.IS_PRODUCTION`), so a TestFlight build automatically gets the production APNs provider.
+3. **Select the APNs provider by the app build's APNs environment, not by `NODE_ENV`.** The app sends `{ apnsEnvironment: 'development' | 'production' }` in the `POST /calls/token` body (default `production`). This matters because staging builds use **production** APNs (`APNS_MODE` in `app.config.js`) but talk to the **dev** backend, so selecting by `ENV.IS_PRODUCTION` would hand them the sandbox provider and every push would be silently dropped. Provider names come from `STREAM_APN_PROVIDER_SANDBOX`, `STREAM_APN_PROVIDER_PRODUCTION` and `STREAM_FIREBASE_PROVIDER`.
+   - The Stream health probe also lists the app's push providers and reports each configured name as `ok` / `missing` / `disabled` / `not_voip` under `/health/stream` → `details.push`, so a misconfiguration is visible instead of silent.
 4. **Do not build your own VoIP push dispatch.** Stream sends the ring push. Your existing `NotificationService` is used in Iteration 10 for *missed-call* notifications only — a different, non-urgent path.
 5. Document the credential rotation procedure in `boost-backend/docs/` — VoIP certificates expire, and the failure mode (calls silently stop ringing on locked iPhones) is very hard to diagnose cold.
 
@@ -470,9 +475,9 @@ The backend is not on the push path. It only supplies the provider configuration
 
 ### Error and edge-case handling
 - **Wrong APNs environment** — the single most common failure. A development build registered against the production provider gets a sandbox token, and every push is dropped **without error**. The `APNS_MODE` logic in `app.config.js` already handles the entitlement; the Stream provider choice must match it.
-- **Standard APNs key used instead of VoIP** → pushes are accepted and never delivered. Verify the key's purpose in the Apple portal.
+- **APNs provider without VoIP enabled** → pushes are accepted and never delivered. The health check reports it as `not_voip`.
 - **Bundle ID mismatch** — note that iOS is `com.boostra.mobile` and Android is `com.boostra.app`. Easy to cross-wire.
-- **Expired certificate** → silent ring failure. The runbook and a calendar reminder are the mitigation.
+- **Expired or revoked credential** → silent ring failure. `.p8` keys don't expire but can be revoked; `.p12` certificates expire yearly. The runbook covers rotation.
 - **User revoked notification permission** → cannot be fixed server-side. In-app ringing still works; frontend Iteration 11 handles the prompt.
 
 ### Testing procedure
@@ -481,7 +486,8 @@ The backend is not on the push path. It only supplies the provider configuration
 3. **Force-kill the app.** Initiate again → it still rings. This is the definitive test.
 4. Repeat both on a physical Android device.
 5. Use Stream's dashboard push-test tool to verify each provider in isolation before blaming application code.
-6. Verify a staging build resolves the production APNs provider.
+6. Verify a staging build (sending `apnsEnvironment: production` to the dev backend) resolves the production APNs provider.
+7. `GET /health/stream?check=true` → every configured provider reports `ok`.
 
 > Simulators cannot receive VoIP pushes. Physical devices only, for every test in this iteration.
 
@@ -493,7 +499,7 @@ An incoming call rings a locked, backgrounded, or killed device on both platform
 - [ ] Provider names served by the API, not hardcoded in the app
 - [ ] Verified ringing on a **locked** physical iPhone with the app **killed**
 - [ ] Same verified on physical Android
-- [ ] Rotation runbook written with the certificate expiry date recorded
+- [ ] Rotation runbook written (`docs/video-calling-push-runbook.md`) with credential holders recorded
 
 ---
 
@@ -598,11 +604,14 @@ Receive Stream's authoritative call events so the record self-heals when a clien
    | Stream event | Effect |
    |---|---|
    | `call.accepted` | → `active` |
-   | `call.rejected` | → `rejected` |
-   | `call.ended` | → `ended` |
-   | `call.session_participant_left` | if no participants remain → `ended` |
+   | `call.rejected` | reason `timeout` → `missed` · by the caller or reason `cancel` → `cancelled` · reason `busy` → `rejected` (`callee_busy`) · otherwise → `rejected` |
+   | `call.ended` | `active` → `ended` · still `ringing` → `cancelled` |
+   | `call.session_ended` | `active` → `ended` |
+   | `call.session_participant_left` | `active` and the Stream session is now empty (checked via the API) → `ended` (`network_failure`) |
    | `call.missed` | → `missed` |
    | others | log at debug, ack, ignore |
+
+   Raw body: `main.ts` registers its own `express.json()`, which consumes the body before Nest's `rawBody` option can capture it. The raw bytes are kept by that parser's `verify` hook instead (`common/middleware/json-with-raw-body.ts`), scoped to the webhook path.
 5. Route every event through `applyTransition()` from Iteration 7. The idempotency built there is what makes duplicate webhook delivery harmless.
 6. **Always return `200` quickly**, even for events you ignore or cannot map. A non-2xx triggers Stream's retry and can cascade. Do the work synchronously only if it is fast; otherwise enqueue to Bull and ack immediately.
 7. Honour `STREAM_WEBHOOK_ENABLED` — if false, verify the signature, log, and ack without mutating. Useful for staging environments pointed at a shared Stream app.
@@ -746,6 +755,7 @@ Surface calls in the product: a history list, call events inside the chat thread
    - Populates the *other* participant's `id`, `name`, `image` only. Never return the full user document.
    - Adds a computed `direction: 'incoming' | 'outgoing'` per row, relative to the requester — the client should not have to derive this.
    - Uses the `{ participants: 1, createdAt: -1 }` index from Iteration 2. Verify with `.explain()`.
+   - Accepts an optional `status` filter (`GET /calls?status=active`), which frontend Iteration 12's crash-rejoin check relies on.
 2. **Chat thread integration** — a call in a conversation should appear in the message list:
    - Add a `callEvent` message type to the message schema (`type: 'call'`, plus `callId`, `callStatus`, `durationSeconds` in metadata). Extend the existing enum; do not create a parallel collection.
    - On any terminal transition where `conversationId` is set, write this system message via `ChatService` and emit it over the **existing** `chat.gateway.ts` `user_${id}` rooms, so open threads update live with no new socket work.
@@ -820,7 +830,7 @@ Make the feature safe to expose to real users and debuggable when it misbehaves.
    - Redis counter keyed `call:rate:<userId>` with a one-hour sliding window, capped at `CALL_MAX_PER_HOUR` (default 30).
    - Exceeded → `429 CALL_RATE_LIMITED`.
    - Enforce inside `CallService.initiate()`, not just as a controller decorator, so every initiation path is covered.
-2. **Repeat-rejection backoff** — a caller rejected 3 times by the same callee within an hour is blocked from calling that user for an hour. This is the highest-signal harassment pattern in 1:1 calling. Redis key `call:reject:<callerId>:<calleeId>`.
+2. ~~**Repeat-rejection backoff**~~ — **Removed (2026-09-26).** Declines no longer block the caller; blocking the user is the way to stop someone calling. Original design: a caller rejected 3 times by the same callee within an hour is blocked from calling that user for an hour. This is the highest-signal harassment pattern in 1:1 calling. Redis key `call:reject:<callerId>:<calleeId>`.
 3. **Moderation surface** — extend the admin module:
    - `GET /admin/calls` — filter by user, status, date range.
    - `POST /admin/calls/:id/terminate` — force-end a live call via `StreamVideoService.endCall()`.
@@ -843,7 +853,6 @@ Make the feature safe to expose to real users and debuggable when it misbehaves.
 ### API / event flow
 ```
 initiate() ──> rate window check   ──> 429 if exceeded
-          ──> reject-backoff check ──> 403 if backed off
           ──> [existing Iteration 5 flow]
 
 call end ──> POST /calls/:id/stats { mos, packetLoss, jitter } ──> validated, clamped, stored
@@ -871,7 +880,7 @@ call end ──> POST /calls/:id/stats { mos, packetLoss, jitter } ──> valid
 Calling is rate limited, moderatable, and instrumented well enough to diagnose problems from logs alone.
 
 ### Completion criteria
-- [ ] Rate limit and reject-backoff enforced and tested
+- [ ] Rate limit enforced and tested (reject-backoff removed)
 - [ ] Admin can list and terminate calls, and restrict a user's calling
 - [ ] Rate limiting fails open on Redis outage; the lock in Iteration 5 still fails closed
 - [ ] Every transition produces one structured log line
@@ -879,13 +888,116 @@ Calling is rate limited, moderatable, and instrumented well enough to diagnose p
 
 ---
 
-# Iteration 12 — Production hardening and launch readiness
+# Iteration 12 — Callee capability, call privacy, and user-owned call data
+
+### Goal
+Close the gaps between "calls work" and "a complete calling product" that the mockups do not show but users will hit on day one: do not ring people whose app cannot answer, let users decide who can call them, let them manage their own history and missed-call badge, and let them report a call.
+
+### Prerequisites
+- Iterations 1–11.
+- Familiarity with `moderation.controller.ts` (`POST /moderation/reports`, `POST /moderation/block/:userId`) and `report.schema.ts`.
+
+### Implementation steps
+1. **Calling capability — do not ring old app builds.** Boostra is live, so when calling launches most users will be on a build with no Stream client. A call to them rings nowhere and silently becomes `missed`, which the caller reads as being ignored.
+   - Add `callingCapableAt?: Date` to `user.schema.ts`.
+   - Set it in `POST /calls/token` (only a calling-capable build ever calls that endpoint). Write at most once per 24h per user — compare before updating, so token refreshes do not become a write per request.
+   - In `CallService.initiate()`, **after** `assertCanCall()` and **before** the busy check: callee without `callingCapableAt` → `409 CALLEE_UNSUPPORTED`. No record, no Stream call. Running it after authorization means a blocked caller still gets the generic response and learns nothing.
+2. **"Who can call me" — a per-user setting.** Iteration 4's `CALL_POLICY` is an app-wide rule; users need their own control.
+   - Add `callPrivacy: 'everyone' | 'mutual_follows' | 'nobody'` to `user.schema.ts`, default `'mutual_follows'` (identical to the Iteration 4 policy, so existing behaviour does not change for anyone who never opens the setting).
+   - `GET /calls/settings` → `{ callPrivacy }`; `PATCH /calls/settings` with a validated DTO. Keep these in the call module rather than widening `users.controller.ts`.
+   - In `CallAuthorizationService`, after the block check: `nobody` → `CALLS_NOT_ACCEPTED`; `mutual_follows` → the existing mutual-follow check (`NOT_CONNECTED`); `everyone` → skip the relationship check. Self-call, block, ban and `callingRestricted` checks still apply to everyone.
+3. **Pre-flight check — `GET /calls/can-call/:userId`.** Returns `{ allowed: boolean, code?: string }` by running the same `assertCanCall()` + capability + busy logic *without* creating anything. This lets the client disable or hide the call button with the right reason instead of letting the user tap and fail (frontend Iteration 14). Blocked and unavailable must still return the identical `USER_UNAVAILABLE`. Throttle it; it is called on every chat and profile view.
+4. **User-owned history — hide, never delete.**
+   - Add `hiddenFor: ObjectId[]` to `call.schema.ts` (additive; no migration needed).
+   - `DELETE /calls/:id` → `$addToSet: { hiddenFor: userId }`, participant only, idempotent.
+   - `DELETE /calls` → the same via `updateMany` over every call the user participates in ("Clear call history").
+   - Add `hiddenFor: { $ne: userId }` to the Iteration 10 history query. The other participant's history and all analytics are untouched, which is why this is a flag and not a delete.
+5. **Missed-call badge.**
+   - Add `callsSeenAt?: Date` to `user.schema.ts`.
+   - `GET /calls/unseen-count` → count of calls where the user is a participant but not the initiator, `status: missed`, `createdAt > callsSeenAt`, and not hidden. Served by the existing `{ participants: 1, createdAt: -1 }` index.
+   - `POST /calls/seen` → sets `callsSeenAt = now`.
+6. **Report a call.**
+   - Add `CALL = 'call'` to `ReportContentType` in `report.schema.ts`. The existing `POST /moderation/reports` then accepts `{ contentType: 'call', contentId: <call _id>, reason }`.
+   - In `ModerationService.createReport()`, for `call` reports verify the reporter was a participant (`403` otherwise), and store the *other* participant as the reported user so the admin queue groups it with that user's other reports.
+   - The admin report view shows call metadata — participants, type, start, duration, end reason. There is no media to show (no recording, by design).
+   - "Report and block" is the existing `POST /moderation/block/:userId`, which already terminates a live call via Iteration 7.
+7. **Post-call feedback.** Extend the Iteration 11 `POST /calls/:id/stats` payload with optional `rating: 1–5` and `issues: ('audio' | 'video' | 'dropped' | 'echo' | 'other')[]`. Store per-user under `metadata.feedback.<userId>`. Add "share of rated calls ≤ 2" to the Iteration 11 metrics — it catches quality regressions that packet stats miss.
+8. **Call-back data on missed-call notifications.** Include `callerId`, `callType`, and `conversationId` in the Iteration 10 `MissedCall` notification metadata, so the app can offer a "Call back" action straight from the notification (frontend Iteration 14).
+
+### Files / modules affected
+- `src/database/schemas/user/user.schema.ts` (`callingCapableAt`, `callPrivacy`, `callsSeenAt`)
+- `src/database/schemas/call/call.schema.ts` (`hiddenFor`)
+- `src/database/schemas/report/report.schema.ts` (`ReportContentType.CALL`)
+- `src/modules/call/call.controller.ts`, `call.service.ts`, `call-authorization.service.ts`, `call.constants.ts`
+- `src/modules/call/dto/update-call-settings.dto.ts` *(new)*
+- `src/modules/moderation/moderation.service.ts`
+- `src/modules/notification/*` (metadata only)
+
+### API / event flow
+```
+POST /calls/token ──> callingCapableAt = now   (at most once per 24h)
+
+GET /calls/can-call/:userId ──> assertCanCall + capability + busy ──> { allowed, code }
+POST /calls ──> assertCanCall (incl. callPrivacy) ──> capability ──> 409 CALLEE_UNSUPPORTED
+                                                               └──> [Iteration 5 flow]
+
+GET|PATCH /calls/settings          { callPrivacy }
+DELETE /calls/:id | DELETE /calls  ──> hiddenFor += me
+GET /calls/unseen-count            ──> missed since callsSeenAt
+POST /calls/seen                   ──> callsSeenAt = now
+
+POST /moderation/reports { contentType: 'call', contentId } ──> participant check ──> report
+POST /calls/:id/stats { ..., rating, issues }               ──> metadata.feedback.<me>
+```
+
+### Error and edge-case handling
+- **Callee reinstalled an old build after using calling** → `callingCapableAt` is already set, so they ring and time out as `missed`. Rare and self-correcting. If it matters later, have the client send an `X-App-Version` header and compare against a minimum version.
+- **Callee switches to `nobody` mid-call** → does not end the live call; it applies to new calls only.
+- **`CALLS_NOT_ACCEPTED` versus block leakage** → a blocked caller must always get `USER_UNAVAILABLE`, even when the callee's privacy is `nobody`. Keep the block check *before* the privacy check.
+- **`can-call` result goes stale** → it is advisory only. `POST /calls` re-runs every check, and the client must handle its codes too.
+- **Report on a call the reporter was not in** → `403`. The call ID alone is not authorization.
+- **Hiding a live call** → allowed. It only affects that user's list.
+- **Unseen count after "Clear call history"** → hidden calls are excluded from the count, so the badge clears as well.
+
+### Testing procedure
+1. User who has never fetched a token → calling them returns `409 CALLEE_UNSUPPORTED`; nothing is written to Mongo or Stream.
+2. Fetch a token as that user → the next call rings normally. Fetch 10 tokens in a row → `callingCapableAt` is written once.
+3. `callPrivacy: nobody` → `403 CALLS_NOT_ACCEPTED`. `everyone` + no relationship → allowed. `mutual_follows` → the Iteration 4 behaviour.
+4. Callee has blocked caller *and* set `nobody` → the caller gets `USER_UNAVAILABLE`, not `CALLS_NOT_ACCEPTED`.
+5. `can-call` matches the `POST /calls` outcome for every case above.
+6. `DELETE /calls/:id` → gone from my history, still in the other user's history.
+7. Two missed calls → `unseen-count` = 2; `POST /calls/seen` → 0; one more missed call → 1.
+8. Report a call as a participant → report created; as a third party → `403`.
+9. Stats with `rating: 9` → rejected or clamped, never stored raw.
+10. Missed-call notification payload includes `callerId`, `callType`, `conversationId`.
+
+### Expected result
+Calls only ring people who can answer, users control who can reach them, and history, badges and reporting behave the way users expect from a calling app.
+
+### Completion criteria
+- [ ] Old-build callees return `CALLEE_UNSUPPORTED` instead of timing out
+- [ ] `callPrivacy` enforced, defaulting to today's policy
+- [ ] Block state never leaks through the privacy or capability responses
+- [ ] `can-call` agrees with `POST /calls` in every tested case
+- [ ] History hide/clear is per user and non-destructive
+- [ ] Missed-call unseen count correct and index-backed
+- [ ] Calls reportable by participants only
+- [ ] Missed-call notification carries call-back data
+
+---
+
+# Iteration 13 — Production hardening and launch readiness
+
+> **⚠ Security gap found during frontend Iteration 5 — fix before launch.** The Stream user token from `POST /calls/token` lets the app talk to Stream **directly**. With Stream's default permissions on the `default` call type, a user can create and ring calls themselves through the SDK and **bypass every backend check** — blocks, "Who can call me", mutual-follow, the rate limit and reject-backoff, busy checks — and those calls never get a backend record. Only the server should create or ring calls:
+> - In the Stream dashboard (each app) → Video → Call types → `default` → Roles & permissions, remove **create-call** and **ring-call** (and "join any call") from the `user` role, keeping join/leave, send-audio/video and end-call for **members** of a call the server created.
+> - Or define a dedicated call type (e.g. `boostra-1to1`) with those permissions and set `STREAM_CALL_TYPE` to it.
+> - Verify: a client-side `client.call('default', 'x').getOrCreate({ ring: true, data: { members: [...] } })` must fail with a permission error, while the normal app flow (server creates → callee accepts/joins → either ends) still works.
 
 ### Goal
 Close the gap between "works on my machine with two test accounts" and "safe to put in front of users."
 
 ### Prerequisites
-- Iterations 1–11 complete and verified.
+- Iterations 1–12 complete and verified.
 
 ### Implementation steps
 1. **Environment separation** — a **separate Stream app** for staging and production. A shared app means staging test calls ring real users' phones. Non-negotiable.
@@ -894,7 +1006,7 @@ Close the gap between "works on my machine with two test accounts" and "safe to 
 4. **Load sanity check** — at 50–100 users you will not stress Stream. Do verify that your *own* endpoints hold: 50 concurrent `POST /calls/token` should not saturate the instance. Token generation is local HMAC and should be sub-millisecond; if it is not, something is wrong.
 5. **Cost monitoring** — a weekly job summing `durationSeconds × 2` (participant-minutes) against the Maker allowance. Alert at 70%. The Maker Account has hard limits rather than overage billing, so hitting the ceiling means **calls stop working**, not a surprise invoice. That failure mode must be caught early.
 6. **Runbook** in `boost-backend/docs/video-calling-runbook.md`:
-   - "Calls do not ring on iOS" → check APNs VoIP certificate expiry, environment match, Stream provider config, device token registration. In that order.
+   - "Calls do not ring on iOS" → already covered in `docs/video-calling-push-runbook.md`; link it rather than duplicating.
    - "Calls ring but do not connect" → Stream status page, client network, TURN reachability.
    - "Call records stuck active" → check webhook delivery in the dashboard, then the sweeper logs.
    - Certificate rotation procedure and expiry dates.
@@ -967,12 +1079,13 @@ The feature can be enabled for real users with a rollback switch, a runbook, and
 │                        │    └── 9 (timeouts)
 │                        │         └── 10 (history, chat, notifications)
 │                        │              └── 11 (abuse, observability)
-│                        │                   └── 12 (hardening)
+│                        │                   └── 12 (capability, privacy, user-owned data)
+│                        │                        └── 13 (hardening)
 ```
 
 **Minimum viable ringing call:** Iterations 1 → 2 → 3 → 4 → 5 → 6.
 **Minimum trustworthy call records:** add 7 → 8 → 9.
-**Minimum shippable:** all twelve.
+**Minimum shippable:** all thirteen.
 
 ## Deliberate non-goals
 

@@ -114,6 +114,105 @@ export class ENV {
     return configService.get<string>('FIREBASE_PRIVATE_KEY', '');
   }
 
+  // Stream Video (calling). The key is public and shipped to the app; the
+  // secret signs user tokens and verifies webhooks, and never leaves the server.
+  static get STREAM_API_KEY(): string {
+    return configService.get<string>('STREAM_API_KEY', '').trim();
+  }
+
+  static get STREAM_API_SECRET(): string {
+    return configService.get<string>('STREAM_API_SECRET', '').trim();
+  }
+
+  static get STREAM_APP_ID(): string {
+    return configService.get<string>('STREAM_APP_ID', '').trim();
+  }
+
+  // Push provider *names* as configured in the Stream dashboard. Served to the
+  // app so the same binary works against any backend. The APNs one is chosen
+  // per app build (sandbox for development builds, production for staging /
+  // TestFlight / App Store) — not per backend environment.
+  static get STREAM_APN_PROVIDER_SANDBOX(): string {
+    return configService.get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-dev').trim();
+  }
+
+  static get STREAM_APN_PROVIDER_PRODUCTION(): string {
+    return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-prod').trim();
+  }
+
+  /**
+   * Kill switch for webhook ingestion. When off, webhooks are still verified,
+   * logged and acknowledged, but never change call records — for staging
+   * environments pointed at a shared Stream app.
+   */
+  static get STREAM_WEBHOOK_ENABLED(): boolean {
+    const raw = configService.get<string>('STREAM_WEBHOOK_ENABLED', 'true');
+    return raw !== 'false' && raw !== '0';
+  }
+
+  /** How long a call rings before it becomes missed. Long enough to reach a phone in a pocket. */
+  static get CALL_RING_TIMEOUT_SECONDS(): number {
+    const n = Number(configService.get<string>('CALL_RING_TIMEOUT_SECONDS', '45'));
+    return Number.isFinite(n) && n > 0 ? n : 45;
+  }
+
+  /**
+   * Master switch for new calls (tokens, initiation, pre-flight). Off: those
+   * return 503 CALLING_DISABLED; in-flight calls, webhooks and history keep
+   * working. Defaults OFF in production so calling ships dark, ON elsewhere.
+   */
+  static get CALLING_ENABLED(): boolean {
+    const raw = configService.get<string>('CALLING_ENABLED');
+    if (raw === undefined || raw === '') return !this.IS_PRODUCTION;
+    return raw === 'true' || raw === '1';
+  }
+
+  /** While CALLING_ENABLED is off, these user ids can still call (internal rollout). */
+  static get CALLING_ROLLOUT_USER_IDS(): string[] {
+    return configService
+      .get<string>('CALLING_ROLLOUT_USER_IDS', '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * The production Stream app's id. When set, boot refuses a mismatch: a
+   * non-production backend whose key belongs to this app (staging test calls
+   * would ring real users), or a production backend whose key doesn't.
+   */
+  static get STREAM_PRODUCTION_APP_ID(): string {
+    return configService.get<string>('STREAM_PRODUCTION_APP_ID', '').trim();
+  }
+
+  /**
+   * Monthly participant-minute allowance of the Stream plan. The Maker plan has
+   * hard limits, so running out means calls stop working. Unset: no alert.
+   */
+  static get CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE(): number {
+    const n = Number(configService.get<string>('CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE', '0'));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /** Per-caller cap on call initiations in any rolling hour. */
+  static get CALL_MAX_PER_HOUR(): number {
+    const n = Number(configService.get<string>('CALL_MAX_PER_HOUR', '30'));
+    return Number.isFinite(n) && n > 0 ? n : 30;
+  }
+
+  /**
+   * Hourly answer rate below this logs an ALERT. A dead VoIP credential looks
+   * exactly like a falling answer rate and is otherwise invisible.
+   */
+  static get CALL_ANSWER_RATE_ALERT_FLOOR(): number {
+    const n = Number(configService.get<string>('CALL_ANSWER_RATE_ALERT_FLOOR', '0.4'));
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.4;
+  }
+
+  static get STREAM_FIREBASE_PROVIDER(): string {
+    return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
+  }
+
   // Bull Queue
   static get BULL_REDIS_HOST(): string {
     return configService.get<string>('BULL_REDIS_HOST', this.REDIS_HOST);
