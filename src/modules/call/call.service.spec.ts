@@ -454,6 +454,7 @@ describe('CallService', () => {
       answeredAt: new Date(),
       endedAt: new Date(),
       durationSeconds: 252,
+      streamCallId: 'default:abc-123',
       createdAt: new Date(),
       ...overrides,
     });
@@ -475,6 +476,14 @@ describe('CallService', () => {
         name: 'bob',
         image: 'https://cdn/b.jpg',
       });
+    });
+
+    it('returns the Stream call split into type and id (crash-rejoin lookup)', async () => {
+      rows = [row(), row({ streamCallId: undefined }), row({ streamCallId: 'garbage' })];
+
+      const { data } = await service.getHistory(me, { page: 1, limit: 10 } as any);
+
+      expect(data.map((d) => d.stream)).toEqual([{ type: 'default', id: 'abc-123' }, null, null]);
     });
 
     it('renders a deleted participant as a placeholder instead of failing', async () => {
@@ -762,6 +771,18 @@ describe('CallService', () => {
           issues: ['audio', 'echo'],
           ratedAt: expect.any(Date),
         });
+        // Rating only: the quality stats sent at hang-up are left alone.
+        expect(set).not.toHaveProperty(`metadata.quality.${me._id}`);
+      });
+
+      it('an empty report writes nothing', async () => {
+        const me = makeUser();
+        callModel.findById = jest.fn(() => ({ lean: async () => ({ _id: oid(), participants: [me._id, oid()] }) }));
+        callModel.updateOne.mockClear();
+
+        await expect(service.recordStats(me, oid().toString(), {})).resolves.toEqual({ recorded: true });
+
+        expect(callModel.updateOne).not.toHaveBeenCalled();
       });
     });
 

@@ -989,6 +989,11 @@ Calls only ring people who can answer, users control who can reach them, and his
 
 # Iteration 13 — Production hardening and launch readiness
 
+> **⚠ Security gap found during frontend Iteration 5 — fix before launch.** The Stream user token from `POST /calls/token` lets the app talk to Stream **directly**. With Stream's default permissions on the `default` call type, a user can create and ring calls themselves through the SDK and **bypass every backend check** — blocks, "Who can call me", mutual-follow, the rate limit and reject-backoff, busy checks — and those calls never get a backend record. Only the server should create or ring calls:
+> - In the Stream dashboard (each app) → Video → Call types → `default` → Roles & permissions, remove **create-call** and **ring-call** (and "join any call") from the `user` role, keeping join/leave, send-audio/video and end-call for **members** of a call the server created.
+> - Or define a dedicated call type (e.g. `boostra-1to1`) with those permissions and set `STREAM_CALL_TYPE` to it.
+> - Verify: a client-side `client.call('default', 'x').getOrCreate({ ring: true, data: { members: [...] } })` must fail with a permission error, while the normal app flow (server creates → callee accepts/joins → either ends) still works.
+
 ### Goal
 Close the gap between "works on my machine with two test accounts" and "safe to put in front of users."
 

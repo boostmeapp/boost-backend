@@ -74,6 +74,12 @@ export interface InitiateCallResponse {
   createdAt: Date;
 }
 
+/** 'default:<uuid>' → { type, id }; null for a missing or malformed id. */
+const splitStreamCallId = (cid?: string): { type: string; id: string } | null => {
+  const at = cid ? cid.indexOf(':') : -1;
+  return at > 0 && at < cid!.length - 1 ? { type: cid!.slice(0, at), id: cid!.slice(at + 1) } : null;
+};
+
 export interface CallHistoryItem {
   callId: string;
   callType: CallType;
@@ -83,6 +89,11 @@ export interface CallHistoryItem {
   /** The other participant. id is null when their account is gone. */
   otherParticipant: { id: string | null; name: string; image: string | null };
   conversationId: string | null;
+  /**
+   * The Stream call, split like InitiatedCall.stream — lets the app look up a
+   * call it lost track of (crash-rejoin). Only ever returned to participants.
+   */
+  stream: { type: string; id: string } | null;
   ringStartedAt: Date;
   answeredAt: Date | null;
   endedAt: Date | null;
@@ -359,6 +370,7 @@ export class CallService {
           ? { id: String(other._id), name: displayName(other, 'Boostra user'), image: other.profileImage || null }
           : { id: null, name: 'Deleted user', image: null },
         conversationId: c.conversation ? String(c.conversation) : null,
+        stream: splitStreamCallId(c.streamCallId),
         ringStartedAt: c.ringStartedAt,
         answeredAt: c.answeredAt ?? null,
         endedAt: c.endedAt ?? null,
@@ -606,12 +618,18 @@ export class CallService {
       });
     }
 
-    const quality: Record<string, unknown> = { reportedAt: new Date() };
+    const quality: Record<string, unknown> = {};
     for (const key of ['mos', 'packetLoss', 'jitter', 'reconnectCount'] as const) {
       if (stats[key] !== undefined) quality[key] = stats[key];
     }
 
-    const set: Record<string, unknown> = { [`metadata.quality.${userId}`]: quality };
+    // The app reports quality at hang-up and, separately, a sampled rating
+    // from the post-call sheet. A rating-only report must not wipe the
+    // quality figures already stored.
+    const set: Record<string, unknown> = {};
+    if (Object.keys(quality).length) {
+      set[`metadata.quality.${userId}`] = { ...quality, reportedAt: new Date() };
+    }
     if (stats.rating !== undefined) {
       set[`metadata.feedback.${userId}`] = {
         rating: stats.rating,
@@ -620,7 +638,7 @@ export class CallService {
       };
     }
 
-    await this.callModel.updateOne({ _id: call._id }, { $set: set });
+    if (Object.keys(set).length) await this.callModel.updateOne({ _id: call._id }, { $set: set });
     return { recorded: true };
   }
 

@@ -10,6 +10,11 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { DeviceToken } from '../../../database/schemas/notification/device-token.schema';
 import { DevicePlatform, NotificationType } from '../notification.constants';
 
+/** iOS notification categories, by notification type. Must match the app's registered categories. */
+export const PUSH_CATEGORY_BY_TYPE: Record<string, string> = {
+  [NotificationType.MissedCall]: 'MISSED_CALL',
+};
+
 export interface SendResult {
   success: boolean;
   sentCount: number;
@@ -181,6 +186,10 @@ export class PushNotificationService implements OnModuleInit {
   /* ------------------------------------------------------------------ */
 
   private basePayload(type: string, metadata?: Record<string, any>) {
+    // iOS action buttons come from a notification category the app registers
+    // (the app's MISSED_CALL category adds "Call back"). Android system
+    // notifications can't carry actions; there, tapping opens the thread.
+    const category = PUSH_CATEGORY_BY_TYPE[type];
     return {
       android: {
         priority: 'high' as const,
@@ -188,7 +197,7 @@ export class PushNotificationService implements OnModuleInit {
       },
       apns: {
         headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
-        payload: { aps: { sound: 'default' } },
+        payload: { aps: { sound: 'default', ...(category && { category }) } },
       },
       // FCM data values must be strings.
       data: {
