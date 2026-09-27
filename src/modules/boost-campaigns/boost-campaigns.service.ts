@@ -16,6 +16,7 @@ import {
   CampaignGoal,
   CampaignStatus,
   LIVE_CAMPAIGN_STATUSES,
+  LOCATION_WORLDWIDE,
 } from '../../database/schemas/boost-campaign/boost-campaign.schema';
 import {
   ModerationStatus,
@@ -36,6 +37,7 @@ import {
   BOOST_CONFIG,
   BOOST_TIERS,
   GENDER_OPTIONS,
+  LOCATION_OPTIONS,
 } from './boost-campaigns.config';
 import { BoostTargetingService } from './boost-targeting.service';
 import { calculateReach } from './boost-reach';
@@ -81,11 +83,25 @@ export class BoostCampaignsService {
         step: BOOST_CONFIG.COINS_STEP,
         tiers: BOOST_TIERS,
       },
-      durations: BOOST_CONFIG.DURATIONS,
+      // Budget is picked as £/day over a number of days; the app multiplies
+      // the two and converts at coinsPerGbp to get the `coins` it sends back
+      // to estimate/create. Served rather than hardcoded so pricing can move
+      // without shipping an app update.
+      budgetPerDay: {
+        min: BOOST_CONFIG.BUDGET_PER_DAY_MIN,
+        max: BOOST_CONFIG.BUDGET_PER_DAY_MAX,
+        step: BOOST_CONFIG.BUDGET_PER_DAY_STEP,
+      },
+      duration: {
+        min: BOOST_CONFIG.DURATION_MIN,
+        max: BOOST_CONFIG.DURATION_MAX,
+      },
+      coinsPerGbp: ENV.COINS_PER_GBP,
       viewsPerCoin: ENV.BOOST_VIEWS_PER_COIN,
       audienceSizes: AUDIENCE_SIZE_OPTIONS,
       ages: AGE_OPTIONS.map(({ key, label }) => ({ key, label })),
       genders: GENDER_OPTIONS,
+      locations: LOCATION_OPTIONS,
       goals: [{ key: CampaignGoal.VIEWS, label: 'More Video Views' }],
     };
   }
@@ -121,7 +137,17 @@ export class BoostCampaignsService {
       requestedViews: reach.requestedViews,
       finalReach: reach.finalReach,
       coinsRequested: dto.coins,
-      coinsCharged: reach.coinsRequired,
+
+      // The whole budget is taken up front, the way the original Promote
+      // screen worked: the advertiser commits £/day × days and that is what
+      // leaves the balance. Anything the campaign cannot deliver comes back at
+      // settle() — refund = coinsCharged − ceil(deliveredViews / viewsPerCoin)
+      // — so the reserve is reconciled rather than kept.
+      //
+      // Charging only what today's audience needs (reach.coinsRequired) would
+      // also freeze the campaign's ceiling at purchase time, so a boost bought
+      // when 24 people were reachable could never grow into a larger audience.
+      coinsCharged: dto.coins,
       maxUsefulCoins: Math.min(
         BOOST_CONFIG.COINS_MAX,
         Math.ceil(reach.audienceReach / viewsPerCoin),
@@ -554,7 +580,19 @@ export class BoostCampaignsService {
 
   // Copies only known fields, so nothing extra is ever persisted.
   private normaliseTargeting(t: EstimateCampaignDto['targeting']) {
-    return { audienceSize: t.audienceSize, age: t.age, gender: t.gender };
+    return {
+      audienceSize: t.audienceSize,
+      age: t.age,
+      gender: t.gender,
+      // Upper-cased so 'gb' and 'GB' are one value; worldwide is the default
+      // for clients that don't send it. Persisted only — countEligible does
+      // not filter on it yet.
+      location: t.location
+        ? t.location === LOCATION_WORLDWIDE
+          ? LOCATION_WORLDWIDE
+          : t.location.toUpperCase()
+        : LOCATION_WORLDWIDE,
+    };
   }
 
   private days(n: number) {

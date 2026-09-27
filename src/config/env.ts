@@ -269,20 +269,17 @@ export class ENV {
   }
 
   /**
-   * What one coin is worth in the reward currency, used to size a campaign's
-   * viewer reward pool from the coins it charged.
+   * What one coin is worth, used to size a campaign's viewer reward pool from
+   * the coins it charged.
    *
-   * Coins are priced in the app stores, so the backend has no other way to
-   * know their value — coin packages carry only a display-only priceLabel.
-   *
-   * The 0.01 default is what the existing pricing implies from two
-   * independent places: the retired Promote screen charged 3,000,000 coins
-   * for £30,000, and the agreed example prices 700 coins at $9.99. Both land
-   * at ~100 coins per unit. Override per environment if pricing changes —
-   * this figure decides what viewers are actually paid.
+   * Derived from COINS_PER_GBP rather than configured separately: that is the
+   * same rate the boost flow prices with (£/day × days × COINS_PER_GBP), and
+   * two independent constants would eventually disagree — at which point
+   * advertisers and viewers would be trading at different rates.
    */
   static get COIN_VALUE(): number {
-    return Number(configService.get<string>('COIN_VALUE', '0.01'));
+    const perGbp = this.COINS_PER_GBP;
+    return perGbp > 0 ? 1 / perGbp : 0;
   }
 
   // RevenueCat webhook Authorization header secret

@@ -6,6 +6,8 @@ import {
   IsMongoId,
   IsNumber,
   IsOptional,
+  IsString,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -28,6 +30,15 @@ export class TargetingDto {
 
   @IsEnum(TargetGender)
   gender: TargetGender;
+
+  // 'worldwide' or an ISO 3166-1 alpha-2 code. Optional so clients built
+  // before location existed keep working — it defaults worldwide.
+  @IsOptional()
+  @IsString()
+  @Matches(/^(worldwide|[A-Za-z]{2})$/, {
+    message: 'location must be "worldwide" or a two-letter country code',
+  })
+  location?: string;
 }
 
 export class EstimateCampaignDto {
@@ -41,8 +52,12 @@ export class EstimateCampaignDto {
   @Max(BOOST_CONFIG.COINS_MAX)
   coins: number;
 
+  // A whole number of days anywhere in range — duration is a slider, not a
+  // fixed set of presets.
   @Type(() => Number)
-  @IsIn(BOOST_CONFIG.DURATIONS)
+  @IsInt()
+  @Min(BOOST_CONFIG.DURATION_MIN)
+  @Max(BOOST_CONFIG.DURATION_MAX)
   durationDays: number;
 }
 
