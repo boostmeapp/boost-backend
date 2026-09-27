@@ -40,6 +40,12 @@ function setup(
   };
   const notifications = { notify: jest.fn(() => Promise.resolve([])) };
   const redis = { delValue: jest.fn(() => Promise.resolve(1)) };
+  // Returns a pool by default, so activation sets hasRewardPool.
+  const rewards = {
+    createCampaignReward: jest.fn(() => Promise.resolve({ _id: 'pool' })),
+    setCampaignRewardActive: jest.fn(() => Promise.resolve(true)),
+    closeCampaignReward: jest.fn(() => Promise.resolve()),
+  };
 
   const service = new BoostCampaignsService(
     campaignModel as any,
@@ -49,9 +55,10 @@ function setup(
     notifications as any,
     redis as any,
     { toUrl: (v: string) => v } as any,
+    rewards as any,
   );
 
-  return { service, campaignModel, videoModel, coins, notifications };
+  return { service, campaignModel, videoModel, coins, notifications, rewards };
 }
 
 describe('BoostCampaignsService.estimate', () => {
@@ -69,7 +76,7 @@ describe('BoostCampaignsService.estimate', () => {
     expect(q.coinsCharged).toBe(500);
   });
 
-  it('is limited by the audience share and charges only what that needs', async () => {
+  it('limits delivery to the audience share but still charges the whole budget', async () => {
     const { service } = setup({ eligible: 47 });
     const q = await service.estimate('owner', {
       targeting: { ...targeting, audienceSize: AudienceSize.WIDE },
@@ -81,9 +88,11 @@ describe('BoostCampaignsService.estimate', () => {
     expect(q.requestedViews).toBe(2000);
     expect(q.finalReach).toBe(47);
     expect(q.targetViews).toBe(47); // the campaign's delivery target
-    expect(q.coinsCharged).toBe(12); // ceil(47 / 4)
+    // The whole budget is reserved up front; settle() refunds whatever the
+    // campaign could not deliver, so a small audience costs little in the end.
+    expect(q.coinsCharged).toBe(500);
     expect(q.coinsRequested).toBe(500);
-    expect(q.maxUsefulCoins).toBe(12);
+    expect(q.maxUsefulCoins).toBe(12); // what this audience could actually use
   });
 
   it('gives each audience size a different reach', async () => {
@@ -109,7 +118,8 @@ describe('BoostCampaignsService.estimate', () => {
       coins: 100,
       durationDays: 1,
     });
-    expect(q.targeting).toEqual(targeting);
+    // location defaults in when the client doesn't send one; `extra` is dropped.
+    expect(q.targeting).toEqual({ ...targeting, location: 'worldwide' });
   });
 });
 

@@ -47,6 +47,9 @@ export enum TargetGender {
   OTHERS = 'others',
 }
 
+/** Every country. Campaigns default to this. */
+export const LOCATION_WORLDWIDE = 'worldwide';
+
 @Schema({ _id: false })
 export class CampaignTargeting {
   @Prop({ type: String, enum: AudienceSize, default: AudienceSize.BALANCED })
@@ -57,6 +60,18 @@ export class CampaignTargeting {
 
   @Prop({ type: String, enum: TargetGender, default: TargetGender.ALL })
   gender: TargetGender;
+
+  /**
+   * ISO 3166-1 alpha-2 country code, or LOCATION_WORLDWIDE.
+   *
+   * Recorded but not yet acted on: countEligible ignores it, so a campaign
+   * targeting one country still reaches the same audience as a worldwide one.
+   * Stored now so campaigns created before location filtering exists carry the
+   * advertiser's intent, and so the estimate can start using it without a
+   * migration. Not an enum — the country list moves faster than the schema.
+   */
+  @Prop({ type: String, default: LOCATION_WORLDWIDE, uppercase: false, trim: true })
+  location: string;
 }
 
 @Schema({ _id: false })

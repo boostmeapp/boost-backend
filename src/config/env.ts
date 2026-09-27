@@ -133,11 +133,15 @@ export class ENV {
   // per app build (sandbox for development builds, production for staging /
   // TestFlight / App Store) — not per backend environment.
   static get STREAM_APN_PROVIDER_SANDBOX(): string {
-    return configService.get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-dev').trim();
+    return configService
+      .get<string>('STREAM_APN_PROVIDER_SANDBOX', 'boostra-voip-dev')
+      .trim();
   }
 
   static get STREAM_APN_PROVIDER_PRODUCTION(): string {
-    return configService.get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-prod').trim();
+    return configService
+      .get<string>('STREAM_APN_PROVIDER_PRODUCTION', 'boostra-voip-prod')
+      .trim();
   }
 
   /**
@@ -152,7 +156,9 @@ export class ENV {
 
   /** How long a call rings before it becomes missed. Long enough to reach a phone in a pocket. */
   static get CALL_RING_TIMEOUT_SECONDS(): number {
-    const n = Number(configService.get<string>('CALL_RING_TIMEOUT_SECONDS', '45'));
+    const n = Number(
+      configService.get<string>('CALL_RING_TIMEOUT_SECONDS', '45'),
+    );
     return Number.isFinite(n) && n > 0 ? n : 45;
   }
 
@@ -190,7 +196,12 @@ export class ENV {
    * hard limits, so running out means calls stop working. Unset: no alert.
    */
   static get CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE(): number {
-    const n = Number(configService.get<string>('CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE', '0'));
+    const n = Number(
+      configService.get<string>(
+        'CALL_MONTHLY_PARTICIPANT_MINUTES_ALLOWANCE',
+        '0',
+      ),
+    );
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
@@ -205,12 +216,16 @@ export class ENV {
    * exactly like a falling answer rate and is otherwise invisible.
    */
   static get CALL_ANSWER_RATE_ALERT_FLOOR(): number {
-    const n = Number(configService.get<string>('CALL_ANSWER_RATE_ALERT_FLOOR', '0.4'));
+    const n = Number(
+      configService.get<string>('CALL_ANSWER_RATE_ALERT_FLOOR', '0.4'),
+    );
     return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.4;
   }
 
   static get STREAM_FIREBASE_PROVIDER(): string {
-    return configService.get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android').trim();
+    return configService
+      .get<string>('STREAM_FIREBASE_PROVIDER', 'boostra-android')
+      .trim();
   }
 
   // Bull Queue
@@ -292,6 +307,19 @@ export class ENV {
       .split(',')
       .map((f) => f.trim())
       .filter(Boolean);
+  }
+  /**
+   * What one coin is worth, used to size a campaign's viewer reward pool from
+   * the coins it charged.
+   *
+   * Derived from COINS_PER_GBP rather than configured separately: that is the
+   * same rate the boost flow prices with (£/day × days × COINS_PER_GBP), and
+   * two independent constants would eventually disagree — at which point
+   * advertisers and viewers would be trading at different rates.
+   */
+  static get COIN_VALUE(): number {
+    const perGbp = this.COINS_PER_GBP;
+    return perGbp > 0 ? 1 / perGbp : 0;
   }
 
   // RevenueCat webhook Authorization header secret

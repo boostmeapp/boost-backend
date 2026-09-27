@@ -16,6 +16,7 @@ import {
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { CoinsModule } from '../coins/coins.module';
+import { RewardModule } from '../reward/reward.module';
 import {
   BoostCampaignsController,
   VideoViewsController,
@@ -45,6 +46,8 @@ import { VideoViewsService } from './video-views.service';
       { name: User.name, schema: UserSchema },
     ]),
     CoinsModule,
+    // Boosted videos fund the viewer reward pool; RewardModule owns it.
+    RewardModule,
   ],
   controllers: [BoostCampaignsController, VideoViewsController],
   providers: [

@@ -7,6 +7,7 @@ import {
   CampaignTargeting,
   TargetAge,
   TargetGender,
+  LOCATION_WORLDWIDE,
 } from '../../database/schemas/boost-campaign/boost-campaign.schema';
 
 const YEAR = 365.25 * 24 * 3600 * 1000;
@@ -18,6 +19,8 @@ const targeting = (
   audienceSize: AudienceSize.BALANCED,
   age: TargetAge.ABOVE_18,
   gender: TargetGender.ALL,
+  // Stored but not filtered on yet, so it makes no difference to these.
+  location: LOCATION_WORLDWIDE,
   ...over,
 });
 
