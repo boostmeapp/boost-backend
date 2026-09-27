@@ -28,6 +28,7 @@ import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/notification.constants';
 import { RedisService } from '../redis/redis.service';
 import { MediaUrlService } from '../../common/services/media-url.service';
+import { RewardService } from '../reward/reward.service';
 import {
   ACTIVE_CAMPAIGNS_CACHE_KEY,
   AGE_OPTIONS,
@@ -65,6 +66,7 @@ export class BoostCampaignsService {
     private readonly notificationService: NotificationService,
     private readonly redis: RedisService,
     private readonly mediaUrl: MediaUrlService,
+    private readonly rewardService: RewardService,
   ) {}
 
   /* ------------------------------------------------------------------ */
@@ -242,10 +244,31 @@ export class BoostCampaignsService {
       throw err;
     }
 
+    // Viewers earn from a boosted video out of a pool funded by this
+    // campaign's coins. hasRewardPool is what recordVideoWatch gates on, and
+    // is only set once the pool actually exists — a campaign too small to pay
+    // a single reward gets no pool, and the video stays boosted without one.
+    let hasRewardPool = false;
+    try {
+      const pool = await this.rewardService.createCampaignReward(
+        String(campaign._id),
+        String(video._id),
+        campaign.coinsCharged,
+      );
+      hasRewardPool = Boolean(pool);
+    } catch (err: any) {
+      // The boost is paid for and must still run; rewards are the part that
+      // degrades. Logged loudly because it means viewers earn nothing.
+      this.logger.error(
+        `Reward pool failed for campaign ${campaign._id}: ${err?.message}`,
+      );
+    }
+
     await this.videoModel.updateOne(
       { _id: video._id },
       {
         isBoosted: true,
+        hasRewardPool,
         activeCampaign: campaign._id,
         boostStartDate: campaign.startAt,
         boostEndDate: campaign.endAt,
@@ -365,6 +388,25 @@ export class BoostCampaignsService {
     if (!updated)
       throw new BadRequestException(`CAMPAIGN_NOT_${from.toUpperCase()}`);
 
+    // Follow the pause with the reward pool. Rewards gate on the video's
+    // flags, not on campaign status, so a paused campaign would otherwise keep
+    // paying for organic views the advertiser is no longer buying.
+    const active = to === CampaignStatus.ACTIVE;
+    try {
+      const hasRewardPool = await this.rewardService.setCampaignRewardActive(
+        String(updated._id),
+        active,
+      );
+      await this.videoModel.updateOne(
+        { _id: updated.video, activeCampaign: updated._id },
+        { $set: { hasRewardPool } },
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Could not ${active ? 'resume' : 'suspend'} the reward pool for campaign ${updated._id}: ${err?.message}`,
+      );
+    }
+
     await this.invalidateActiveCache();
     return this.present(updated);
   }
@@ -419,10 +461,26 @@ export class BoostCampaignsService {
       }
     }
 
+    // Stop the pool paying out with the boost. Already-earned rewards stand —
+    // those views happened — so only the unspent remainder is closed off,
+    // mirroring the coin refund for undelivered views above.
+    await this.rewardService
+      .closeCampaignReward(String(settled._id))
+      .catch((err: any) =>
+        this.logger.error(
+          `Could not close the reward pool for campaign ${settled._id}: ${err?.message}`,
+        ),
+      );
+
     await this.videoModel.updateOne(
       { _id: settled.video, activeCampaign: settled._id },
       {
-        $set: { isBoosted: false, boostScore: 0, boostEndDate: endedAt },
+        $set: {
+          isBoosted: false,
+          hasRewardPool: false,
+          boostScore: 0,
+          boostEndDate: endedAt,
+        },
         $unset: { activeCampaign: 1 },
       },
     );

@@ -268,6 +268,23 @@ export class ENV {
     return Number(configService.get<string>('BOOST_VIEWS_PER_COIN', '4'));
   }
 
+  /**
+   * What one coin is worth in the reward currency, used to size a campaign's
+   * viewer reward pool from the coins it charged.
+   *
+   * Coins are priced in the app stores, so the backend has no other way to
+   * know their value — coin packages carry only a display-only priceLabel.
+   *
+   * The 0.01 default is what the existing pricing implies from two
+   * independent places: the retired Promote screen charged 3,000,000 coins
+   * for £30,000, and the agreed example prices 700 coins at $9.99. Both land
+   * at ~100 coins per unit. Override per environment if pricing changes —
+   * this figure decides what viewers are actually paid.
+   */
+  static get COIN_VALUE(): number {
+    return Number(configService.get<string>('COIN_VALUE', '0.01'));
+  }
+
   // RevenueCat webhook Authorization header secret
   static get REVENUECAT_WEBHOOK_SECRET(): string {
     return configService.get<string>('REVENUECAT_WEBHOOK_SECRET', '');

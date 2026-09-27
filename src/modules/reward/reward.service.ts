@@ -16,6 +16,7 @@ import { Boost, REWARD_CONFIG } from '../../database/schemas/boost/boost.schema'
 import { TransactionService } from '../transaction/transaction.service';
 import { TransactionType, TransactionStatus, PaymentMethod } from '../../database/schemas/transaction/transaction.schema';
 import { WalletService } from '../wallet/wallet.service';
+import { ENV } from '../../config';
 
 @Injectable()
 export class RewardService {
@@ -34,6 +35,91 @@ export class RewardService {
     private transactionService: TransactionService,
       private walletService: WalletService, 
   ) {}
+
+/**
+ * Opens a viewer reward pool for a campaign-boosted video.
+ *
+ * The campaign module charges in coins, while the pool — and every reward
+ * paid from it — is denominated in the reward currency, so the coins are
+ * converted here at ENV.COIN_VALUE. Doing it at this boundary keeps the
+ * conversion in one place; recordVideoWatch stays currency-only.
+ *
+ * `sourceId` is the campaign, stored on VideoReward.boost the same way a
+ * legacy boost id is: one pool per boost of either kind.
+ */
+async createCampaignReward(
+  campaignId: string,
+  videoId: string,
+  coinsCharged: number,
+): Promise<VideoReward | null> {
+  const poolCurrency = coinsCharged * ENV.COIN_VALUE;
+  const totalRewardPool = poolCurrency * REWARD_CONFIG.REWARD_POOL_PERCENTAGE;
+
+  // Below one reward, a pool could never pay anyone; leave hasRewardPool
+  // false so recordVideoWatch reports honestly rather than "pool depleted".
+  if (totalRewardPool < this.FIXED_REWARD_PER_VIEW) {
+    return null;
+  }
+
+  const videoReward = new this.videoRewardModel({
+    video: new Types.ObjectId(videoId),
+    boost: new Types.ObjectId(campaignId),
+    totalRewardPool,
+    distributedRewards: 0,
+    remainingRewards: totalRewardPool,
+    rewardPerView: this.FIXED_REWARD_PER_VIEW,
+    totalViews: 0,
+    eligibleViews: 0,
+    isActive: true,
+  });
+
+  await this.updateGlobalStats(totalRewardPool, 0);
+  return videoReward.save();
+}
+
+/**
+ * Suspends or resumes a campaign's pool, following pause/resume.
+ *
+ * A paused campaign stops being delivered, but the video keeps its organic
+ * audience — without this the pool would go on paying for views the
+ * advertiser is no longer buying.
+ *
+ * Resuming will not revive a pool that ran dry: `remainingRewards` is the
+ * real limit, and a depleted pool was deactivated by recordVideoWatch.
+ * Returns whether a pool is active afterwards, so the caller can keep
+ * video.hasRewardPool in step.
+ */
+async setCampaignRewardActive(
+  campaignId: string,
+  isActive: boolean,
+): Promise<boolean> {
+  const filter: Record<string, unknown> = {
+    boost: new Types.ObjectId(campaignId),
+  };
+  if (isActive) filter.remainingRewards = { $gte: this.FIXED_REWARD_PER_VIEW };
+
+  const result = await this.videoRewardModel
+    .updateOne(filter, { $set: { isActive } })
+    .exec();
+
+  return isActive && result.matchedCount > 0;
+}
+
+/**
+ * Closes a campaign's pool when the boost ends or is cancelled.
+ *
+ * Rewards already paid are not clawed back — the views happened. The unspent
+ * remainder simply stops being payable, which matches the coin refund the
+ * campaign issues for undelivered views.
+ */
+async closeCampaignReward(campaignId: string): Promise<void> {
+  await this.videoRewardModel
+    .updateOne(
+      { boost: new Types.ObjectId(campaignId), isActive: true },
+      { $set: { isActive: false } },
+    )
+    .exec();
+}
 
 async createVideoReward(boostId: string, videoId: string): Promise<VideoReward> {
   const boost = await this.boostModel.findById(boostId).exec();

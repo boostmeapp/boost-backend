@@ -40,6 +40,12 @@ function setup(
   };
   const notifications = { notify: jest.fn(() => Promise.resolve([])) };
   const redis = { delValue: jest.fn(() => Promise.resolve(1)) };
+  // Returns a pool by default, so activation sets hasRewardPool.
+  const rewards = {
+    createCampaignReward: jest.fn(() => Promise.resolve({ _id: 'pool' })),
+    setCampaignRewardActive: jest.fn(() => Promise.resolve(true)),
+    closeCampaignReward: jest.fn(() => Promise.resolve()),
+  };
 
   const service = new BoostCampaignsService(
     campaignModel as any,
@@ -49,9 +55,10 @@ function setup(
     notifications as any,
     redis as any,
     { toUrl: (v: string) => v } as any,
+    rewards as any,
   );
 
-  return { service, campaignModel, videoModel, coins, notifications };
+  return { service, campaignModel, videoModel, coins, notifications, rewards };
 }
 
 describe('BoostCampaignsService.estimate', () => {
