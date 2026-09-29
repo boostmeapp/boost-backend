@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { FollowsModule } from './modules/follows/follows.module';
+import { StoriesModule } from './modules/stories/stories.module';
 import { FeedModule } from './modules/feed/feed.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { WalletModule } from './modules/wallet/wallet.module';
@@ -105,6 +106,7 @@ ConfigModule.forRoot({
     AuthModule,
     UsersModule,
     FollowsModule,
+    StoriesModule,
     FeedModule,
     WalletModule,
     TransactionModule,

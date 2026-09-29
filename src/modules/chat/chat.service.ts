@@ -4,6 +4,17 @@ import { Model, Types } from 'mongoose';
 import { Conversation, Message, User } from '../../database/schemas';
 import { MessageType } from '../../database/schemas/chat/message.schema';
 import { UploadService } from '../upload/upload.service';
+import { MediaUrlService } from '../../common/services/media-url.service';
+
+/** What a caller passes to attach a story to a message. */
+export interface StoryReference {
+  storyId: string;
+  owner: string;
+  mediaType: string;
+  mediaKey: string;
+  thumbnailKey?: string;
+  postedAt: Date;
+}
 
 @Injectable()
 export class ChatService {
@@ -15,7 +26,27 @@ export class ChatService {
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
     private readonly uploadService: UploadService,
+    private readonly mediaUrl: MediaUrlService,
   ) {}
+
+  /**
+   * Turn a story reference's stored keys into URLs the client can render.
+   * The keys are a snapshot taken at reply time, so this keeps working after
+   * the story expires.
+   */
+  private withStoryUrls(message: any) {
+    if (!message?.story) return message;
+
+    message.story = {
+      ...message.story,
+      storyId: String(message.story.storyId),
+      owner: String(message.story.owner),
+      url: this.mediaUrl.toUrl(message.story.mediaKey),
+      poster: this.mediaUrl.toUrl(message.story.thumbnailKey),
+    };
+
+    return message;
+  }
 
   /**
    * Helper to ensure an image URL is signed if it comes from private S3
@@ -261,6 +292,8 @@ export class ChatService {
         if (msgObj.image) {
           msgObj.image = await this.signImageUrl(msgObj.image);
         }
+        this.withStoryUrls(msgObj);
+
         const senderObj = msgObj.sender as any;
         if (senderObj && typeof senderObj === 'object') {
           if (senderObj.profileImage) {
@@ -291,12 +324,20 @@ export class ChatService {
   /**
    * Save a new message and update the conversation
    */
+  /**
+   * @param options.story  Set when the message was sent from a story. Stored
+   *   as a snapshot on the message so the thread can show what was replied to
+   *   even after the story expires.
+   * @param options.previewText  What the conversation list shows when the
+   *   message carries no text of its own.
+   */
   async createMessage(
     senderId: string,
     recipientId: string,
     conversationId: string,
     text: string,
     image?: string,
+    options?: { story?: StoryReference; previewText?: string },
   ) {
     if (await this.isBlockedBetween(senderId, recipientId)) {
       throw new ForbiddenException(
@@ -315,6 +356,16 @@ export class ChatService {
       text: text || '',
       image: image || '',
       isRead: false,
+      story: options?.story
+        ? {
+            storyId: new Types.ObjectId(options.story.storyId),
+            owner: new Types.ObjectId(options.story.owner),
+            mediaType: options.story.mediaType,
+            mediaKey: options.story.mediaKey,
+            thumbnailKey: options.story.thumbnailKey,
+            postedAt: options.story.postedAt,
+          }
+        : undefined,
     });
 
     // Populate sender info
@@ -331,11 +382,16 @@ export class ChatService {
       resultObj.image = await this.signImageUrl(resultObj.image);
     }
 
+    this.withStoryUrls(resultObj);
+
     // Update conversation last message & unread count
     const conversation = await this.conversationModel.findById(conversationId);
     if (conversation) {
       conversation.lastMessage = {
-        text: text || (image ? '📷 Photo' : ''),
+        text:
+          text ||
+          options?.previewText ||
+          (options?.story ? 'Replied to a story' : image ? '📷 Photo' : ''),
         sender: senderObj,
         createdAt: message.createdAt,
       };

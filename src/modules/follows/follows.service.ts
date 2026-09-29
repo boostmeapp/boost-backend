@@ -173,8 +173,14 @@ async getFollowing(userId: string, page = 1, limit = 20) {
 
   // Get list of user IDs that a user is following (for feed)
   async getFollowingIds(userId: string): Promise<string[]> {
+    // `follower` resolves to a Mixed path in this setup, so Mongoose does not
+    // cast a string id — querying with one silently matches nothing. Match
+    // both forms, which also covers any legacy row that stored a string.
+    const forms: any[] = [userId];
+    if (Types.ObjectId.isValid(userId)) forms.push(new Types.ObjectId(userId));
+
     const follows = await this.followModel
-      .find({ follower: userId })
+      .find({ follower: { $in: forms } })
       .select('following')
       .lean()
       .exec();

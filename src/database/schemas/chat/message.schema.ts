@@ -26,6 +26,37 @@ export class MessageCallInfo {
 
 const MessageCallInfoSchema = SchemaFactory.createForClass(MessageCallInfo);
 
+/**
+ * The story a message was sent from.
+ *
+ * A snapshot, not a live lookup: the media keys are copied in so the thread
+ * can still show what was replied to once the story has expired. Stories are
+ * never deleted, so `storyId` also stays resolvable.
+ */
+@Schema({ _id: false })
+export class MessageStoryRef {
+  @Prop({ type: Types.ObjectId, ref: 'Story', required: true })
+  storyId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  owner: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  mediaType: string;
+
+  /** S3 key of the story's media, as it was at reply time. */
+  @Prop({ type: String, required: true })
+  mediaKey: string;
+
+  @Prop({ type: String })
+  thumbnailKey?: string;
+
+  @Prop({ type: Date, required: true })
+  postedAt: Date;
+}
+
+const MessageStoryRefSchema = SchemaFactory.createForClass(MessageStoryRef);
+
 @Schema({ timestamps: true, collection: 'messages' })
 export class Message extends Document {
   // Existing rows have no type and read as text.
@@ -35,6 +66,14 @@ export class Message extends Document {
   /** Set only when type is `call`. The sender is the call's initiator. */
   @Prop({ type: MessageCallInfoSchema })
   call?: MessageCallInfo;
+
+  /**
+   * Set when the message was sent as a reply to a story. The message stays an
+   * ordinary text message, so a client that knows nothing about stories still
+   * renders it correctly — it just misses the preview.
+   */
+  @Prop({ type: MessageStoryRefSchema })
+  story?: MessageStoryRef;
 
   @Prop({ type: Types.ObjectId, ref: 'Conversation', required: true })
   conversation: Types.ObjectId;
@@ -67,3 +106,5 @@ MessageSchema.plugin(mongoosePaginate as any);
 
 MessageSchema.index({ conversation: 1, createdAt: -1 });
 MessageSchema.index({ sender: 1, recipient: 1 });
+// "Replies to this story", for a story's own activity.
+MessageSchema.index({ 'story.storyId': 1, createdAt: -1 }, { sparse: true });

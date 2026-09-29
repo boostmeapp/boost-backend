@@ -19,3 +19,5 @@ export * from './boost-campaign/boost-campaign.schema';
 export * from './boost-campaign/boost-impression.schema';
 export * from './boost-campaign/boost-view.schema';
 export * from './video/video-share.schema';
+export * from './story/story.schema';
+export * from './story/story-view.schema';

@@ -109,3 +109,31 @@ describe('ConnectionsService', () => {
     await expect(t.service.getFollowers('not-an-id', undefined, {})).rejects.toThrow();
   });
 });
+
+/**
+ * `follower` is a Mixed path here, so Mongoose does not cast a string id for
+ * us. Querying with the raw string matched nothing and left the story feed
+ * permanently empty — this is that regression.
+ */
+describe('FollowsService.getFollowingIds', () => {
+  it('matches both the string and the ObjectId form of the id', async () => {
+    const me = new Types.ObjectId();
+    let seen: any = null;
+
+    const followModel: any = {
+      find: jest.fn((filter: any) => {
+        seen = filter;
+        return { select: () => ({ lean: () => ({ exec: () => Promise.resolve([]) }) }) };
+      }),
+    };
+
+    const { FollowsService } = require('./follows.service');
+    const service = new FollowsService(followModel, {} as any, {} as any, {} as any);
+
+    await service.getFollowingIds(String(me));
+
+    const forms = seen.follower.$in;
+    expect(forms).toContain(String(me));
+    expect(forms.some((f: any) => f instanceof Types.ObjectId && String(f) === String(me))).toBe(true);
+  });
+});
