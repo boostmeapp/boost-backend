@@ -57,6 +57,14 @@ function setup(opts: {
 
   const uploadService = { headObject: jest.fn(() => Promise.resolve({ size: 1000 })) };
 
+  const userModel: any = {
+    findById: jest.fn(() => ({
+      select: () => ({ lean: () => Promise.resolve({ username: 'liker' }) }),
+    })),
+  };
+
+  const notifications = { notify: jest.fn(() => Promise.resolve([])) };
+
   const chat = {
     getOrCreateConversation: jest.fn((..._args: any[]) => Promise.resolve({ _id: id() } as any)),
     createMessage: jest.fn((..._args: any[]) => Promise.resolve({ _id: id() })),
@@ -67,15 +75,26 @@ function setup(opts: {
   const service = new StoriesService(
     storyModel,
     storyViewModel,
+    userModel,
     queue as any,
     follows as any,
     chat as any,
+    notifications as any,
     chatGateway as any,
     uploadService as any,
     mediaUrl as any,
   );
 
-  return { service, storyModel, storyViewModel, queue, follows, chat, chatGateway };
+  return {
+    service,
+    storyModel,
+    storyViewModel,
+    queue,
+    follows,
+    chat,
+    chatGateway,
+    notifications,
+  };
 }
 
 const id = () => new Types.ObjectId();
@@ -380,6 +399,37 @@ describe('StoriesService', () => {
       await t.service.toggleLike(String(id()), String(id()));
 
       expect(t.storyModel.findByIdAndUpdate.mock.calls[0][1].$set).toEqual({ likeCount: 0 });
+    });
+
+    it('tells the owner about a like', async () => {
+      const owner = String(id());
+      const t = setup({ story: liveStory(owner), isFollowing: true });
+
+      await t.service.toggleLike(String(id()), String(id()));
+      // notify() is fire-and-forget, so let its microtask run.
+      await Promise.resolve();
+
+      expect(t.notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          users: owner,
+          type: 'StoryLike',
+          body: 'liker liked your story',
+        }),
+      );
+    });
+
+    it('says nothing when the like is taken back', async () => {
+      const existingView: any = { liked: true, save: jest.fn() };
+      const t = setup({
+        story: liveStory(String(id()), { likeCount: 2 }),
+        isFollowing: true,
+        existingView,
+      });
+
+      await t.service.toggleLike(String(id()), String(id()));
+      await Promise.resolve();
+
+      expect(t.notifications.notify).not.toHaveBeenCalled();
     });
 
     it('refuses a like on your own story', async () => {

@@ -8,6 +8,8 @@ export enum NotificationType {
   Like = 'Like',
   Comment = 'Comment',
   CommentLike = 'CommentLike',
+  StoryLike = 'StoryLike',
+  Message = 'Message',
   Coins = 'Coins',
   Boost = 'Boost',
   MissedCall = 'MissedCall',

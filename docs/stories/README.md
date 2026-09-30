@@ -135,6 +135,9 @@ opened records the view too. The owner cannot like their own story, for the
 same reason their own view is not counted. Unliking never drops `likeCount`
 below zero.
 
+The owner gets a `StoryLike` notification when someone hearts their story —
+best effort, and only on the like itself, never when it is taken back.
+
 Every serialised story carries `likeCount`, `GET /:id` also carries `liked`
 for the caller, and each row of the viewers list carries `liked` — which is
 what the insights screen draws.

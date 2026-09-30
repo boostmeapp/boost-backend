@@ -15,10 +15,13 @@ import {
   StoryMediaType,
   StoryStatus,
 } from '../../database/schemas/story/story.schema';
+import { User } from '../../database/schemas/user/user.schema';
 import { StoryView } from '../../database/schemas/story/story-view.schema';
 import { MediaUrlService } from '../../common/services/media-url.service';
 import { displayName } from '../../common/utils/display-name.util';
 import { ChatService } from '../chat/chat.service';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
 import { ChatGateway } from '../chat/chat.gateway';
 import { FollowsService } from '../follows/follows.service';
 import { UploadService } from '../upload/upload.service';
@@ -43,9 +46,11 @@ export class StoriesService {
   constructor(
     @InjectModel(Story.name) private readonly storyModel: Model<Story>,
     @InjectModel(StoryView.name) private readonly storyViewModel: Model<StoryView>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectQueue(STORY_QUEUE) private readonly storyQueue: Queue,
     private readonly follows: FollowsService,
     private readonly chat: ChatService,
+    private readonly notifications: NotificationService,
     private readonly chatGateway: ChatGateway,
     private readonly uploadService: UploadService,
     private readonly mediaUrl: MediaUrlService,
@@ -318,6 +323,8 @@ export class StoriesService {
 
     // First contact with the story: it counts as a view as well as a like.
     if (!existing) {
+      void this.notifyLike(story, viewerId);
+
       await this.storyViewModel.create({
         story: story._id,
         viewer: new Types.ObjectId(viewerId),
@@ -344,6 +351,9 @@ export class StoriesService {
 
     const liked = !existing.liked;
 
+    // Only the like is worth telling someone about; taking it back is not.
+    if (liked) void this.notifyLike(story, viewerId);
+
     existing.liked = liked;
     existing.likedAt = liked ? new Date() : undefined;
     await existing.save();
@@ -365,6 +375,31 @@ export class StoriesService {
       likeCount: (updated as any)?.likeCount ?? 0,
       viewCount: (updated as any)?.viewCount ?? 0,
     };
+  }
+
+  /**
+   * Tell the owner someone hearted their story. Best effort: notify()
+   * swallows its own errors, and it drops a notification whose actor is the
+   * recipient, so this can never ping you about yourself.
+   */
+  private async notifyLike(story: any, actorId: string) {
+    const ownerId = String(story.user?._id ?? story.user);
+
+    const actor = await this.userModel
+      .findById(actorId)
+      .select('firstName lastName username')
+      .lean();
+
+    const actorName = displayName(actor);
+
+    void this.notifications.notify({
+      users: ownerId,
+      actor: actorId,
+      type: NotificationType.StoryLike,
+      title: actorName,
+      body: `${actorName} liked your story`,
+      metadata: { storyId: String(story._id), userId: actorId },
+    });
   }
 
   /** Who viewed a story. Owner only — this is their insights screen. */

@@ -1,10 +1,19 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, Message, User } from '../../database/schemas';
 import { MessageType } from '../../database/schemas/chat/message.schema';
 import { UploadService } from '../upload/upload.service';
 import { MediaUrlService } from '../../common/services/media-url.service';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/notification.constants';
+import { ChatPresenceService } from './chat-presence.service';
 
 /** What a caller passes to attach a story to a message. */
 export interface StoryReference {
@@ -18,6 +27,8 @@ export interface StoryReference {
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     @InjectModel(Conversation.name)
     private readonly conversationModel: Model<Conversation>,
@@ -27,6 +38,8 @@ export class ChatService {
     private readonly userModel: Model<User>,
     private readonly uploadService: UploadService,
     private readonly mediaUrl: MediaUrlService,
+    private readonly notificationService: NotificationService,
+    private readonly presence: ChatPresenceService,
   ) {}
 
   /**
@@ -402,7 +415,78 @@ export class ChatService {
       await conversation.save();
     }
 
+    // Socket delivery only reaches an app that is open, so a message to a
+    // backgrounded or closed phone arrived nowhere until this. notify() writes
+    // the row and queues the push, and never throws — a failed notification
+    // must not fail the message that caused it.
+    void this.notifyRecipient(senderId, recipientId, conversationId, resultObj, {
+      text,
+      image,
+      story: options?.story,
+      previewText: options?.previewText,
+    });
+
     return resultObj;
+  }
+
+  /**
+   * Push for a new message.
+   *
+   * The body mirrors the conversation-list preview rather than repeating the
+   * raw text, so a photo or story reply reads as something rather than an
+   * empty line. `conversationId` in the metadata is what the app opens on a
+   * tap; it is checked before `userId` so a message opens the thread, not the
+   * sender's profile.
+   */
+  private async notifyRecipient(
+    senderId: string,
+    recipientId: string,
+    conversationId: string,
+    message: any,
+    content: { text?: string; image?: string; story?: StoryReference; previewText?: string },
+  ) {
+    // Already reading this thread: the socket has just delivered the message,
+    // so a banner over it would be noise. Deliberately scoped to this exact
+    // conversation — the chat list, another thread, another screen, or a
+    // backgrounded app all still get a push.
+    if (this.presence.isViewing(recipientId, conversationId)) {
+      return;
+    }
+
+    try {
+      const sender = await this.userModel
+        .findById(senderId)
+        .select('username firstName lastName name')
+        .lean();
+
+      const senderName =
+        (sender as any)?.name ||
+        (sender as any)?.username ||
+        [(sender as any)?.firstName, (sender as any)?.lastName].filter(Boolean).join(' ') ||
+        'Someone';
+
+      const body =
+        content.text ||
+        content.previewText ||
+        (content.story ? 'Replied to your story' : content.image ? '📷 Photo' : 'Sent you a message');
+
+      await this.notificationService.notify({
+        users: recipientId,
+        actor: senderId,
+        type: NotificationType.Message,
+        title: senderName,
+        body,
+        metadata: {
+          conversationId: String(conversationId),
+          senderId: String(senderId),
+          messageId: String(message?._id ?? ''),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not queue a message notification for ${recipientId}: ${(err as any)?.message}`,
+      );
+    }
   }
 
   /**

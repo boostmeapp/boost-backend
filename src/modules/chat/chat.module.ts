@@ -9,6 +9,8 @@ import { Conversation, ConversationSchema } from '../../database/schemas/chat/co
 import { Message, MessageSchema } from '../../database/schemas/chat/message.schema';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
 import { UploadModule } from '../upload/upload.module';
+import { NotificationModule } from '../notification/notification.module';
+import { ChatPresenceService } from './chat-presence.service';
 
 @Module({
   imports: [
@@ -20,9 +22,11 @@ import { UploadModule } from '../upload/upload.module';
     JwtModule.register({}),
     ConfigModule,
     UploadModule,
+    // New messages push to a recipient whose app is closed.
+    NotificationModule,
   ],
   controllers: [ChatController],
-  providers: [ChatService, ChatGateway],
+  providers: [ChatService, ChatGateway, ChatPresenceService],
   exports: [ChatService, ChatGateway],
 })
 export class ChatModule {}

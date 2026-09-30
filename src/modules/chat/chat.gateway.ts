@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ChatService } from './chat.service';
+import { ChatPresenceService } from './chat-presence.service';
 import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({
@@ -30,6 +31,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly chatService: ChatService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly presence: ChatPresenceService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -69,8 +71,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleDisconnect(client: Socket) {
     if (client.data?.userId) {
       this.connectedUsers.delete(client.data.userId);
+      // A dropped socket cannot be viewing anything, so pushes resume.
+      this.presence.clear(client.data.userId);
       this.logger.log(`User disconnected from Chat Gateway: ${client.data.userId}`);
     }
+  }
+
+  /**
+   * The client reports which conversation is on screen, and clears it when the
+   * screen is left or the app goes to the background. Suppresses the push for
+   * messages arriving in that thread only — see ChatPresenceService.
+   */
+  @SubscribeMessage('viewingConversation')
+  handleViewingConversation(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId?: string | null },
+  ) {
+    const userId = client.data?.userId;
+    if (!userId) return;
+
+    this.presence.setViewing(userId, data?.conversationId ?? null);
   }
 
   @SubscribeMessage('joinConversation')
