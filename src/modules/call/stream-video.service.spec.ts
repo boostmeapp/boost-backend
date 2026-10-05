@@ -108,44 +108,32 @@ describe('StreamVideoService app identity check (Iteration 13)', () => {
     }
   });
 
-  it('2. refuses a staging/dev backend holding PRODUCTION Stream credentials', async () => {
-    env.NODE_ENV = 'development';
-    env.STREAM_PRODUCTION_APP_ID = '111';
-
-    await expect(verify()).rejects.toThrow(/PRODUCTION Stream app \(111\)/);
-  });
-
-  it('refuses production on any other app', async () => {
-    env.NODE_ENV = 'production';
-    env.STREAM_PRODUCTION_APP_ID = '999';
-
-    await expect(verify()).rejects.toThrow(/production is using Stream app 111/);
-  });
-
-  it('refuses when STREAM_APP_ID disagrees with the key\'s real app', async () => {
-    env.STREAM_PRODUCTION_APP_ID = '999';
+  it('refuses when the API key belongs to a different app than STREAM_APP_ID', async () => {
     env.STREAM_APP_ID = '222';
 
-    await expect(verify()).rejects.toThrow(/STREAM_APP_ID is 222 but the API key belongs to app 111/);
+    await expect(verify()).rejects.toThrow(
+      /STREAM_APP_ID is 222 but the API key belongs to app 111/,
+    );
   });
 
-  it('passes on the right app in each environment', async () => {
-    env.STREAM_PRODUCTION_APP_ID = '999';
+  it('passes when the key belongs to STREAM_APP_ID, in any environment', async () => {
+    env.STREAM_APP_ID = '111';
+
     env.NODE_ENV = 'development';
     await expect(verify()).resolves.toBeUndefined();
 
-    env.STREAM_PRODUCTION_APP_ID = '111';
+    // One Stream app serves every environment, so production is no different.
     env.NODE_ENV = 'production';
     await expect(verify()).resolves.toBeUndefined();
   });
 
-  it('skipped when STREAM_PRODUCTION_APP_ID is unset (local dev) — no network call', async () => {
+  it('skipped when STREAM_APP_ID is unset — no network call', async () => {
     await expect(verify()).resolves.toBeUndefined();
     expect(getApp).not.toHaveBeenCalled();
   });
 
   it('Stream unreachable at boot: warns and boots, never blocks a deploy', async () => {
-    env.STREAM_PRODUCTION_APP_ID = '111';
+    env.STREAM_APP_ID = '111';
     getApp.mockRejectedValue(new Error('ETIMEDOUT'));
 
     await expect(verify()).resolves.toBeUndefined();

@@ -102,23 +102,20 @@ export class StreamVideoService implements OnModuleInit {
   }
 
   /**
-   * Refuse to boot against the wrong Stream app — a staging backend holding
-   * production credentials makes staging test calls ring real users. Checks
-   * the app the *key* actually belongs to (not what config claims):
-   *   - non-production + key belongs to STREAM_PRODUCTION_APP_ID → refuse
-   *   - production + key belongs to any other app                → refuse
-   *   - STREAM_APP_ID set but disagrees with the key's real app  → refuse
-   * Skipped when STREAM_PRODUCTION_APP_ID is unset (e.g. local dev). If Stream
-   * can't be reached it warns and boots: an outage must not block a deploy.
+   * Refuse to boot when the API key does not belong to STREAM_APP_ID.
+   *
+   * STREAM_APP_ID is the single source of truth for which Stream app this
+   * backend talks to; one app serves every environment. The check compares it
+   * against the app the *key* actually belongs to, so a wrong or swapped
+   * key/secret is caught at boot rather than when the first call is placed.
+   *
+   * Skipped when STREAM_APP_ID is unset. If Stream can't be reached it warns
+   * and boots: an outage must not block a deploy.
    */
   private async verifyAppIdentity(): Promise<void> {
-    const productionAppId = ENV.STREAM_PRODUCTION_APP_ID;
-    if (!productionAppId) {
-      if (ENV.IS_PRODUCTION) {
-        this.logger.error(
-          'STREAM_PRODUCTION_APP_ID is not set — cannot verify this backend is on the production Stream app.',
-        );
-      }
+    const configuredAppId = ENV.STREAM_APP_ID;
+    if (!configuredAppId) {
+      this.logger.warn('STREAM_APP_ID is not set — the Stream API key cannot be verified.');
       return;
     }
 
@@ -130,18 +127,12 @@ export class StreamVideoService implements OnModuleInit {
       return;
     }
 
-    const problem =
-      ENV.STREAM_APP_ID && ENV.STREAM_APP_ID !== actualAppId
-        ? `STREAM_APP_ID is ${ENV.STREAM_APP_ID} but the API key belongs to app ${actualAppId}`
-        : !ENV.IS_PRODUCTION && actualAppId === productionAppId
-          ? `NODE_ENV=${ENV.NODE_ENV} is using the PRODUCTION Stream app (${actualAppId}) — test calls would ring real users`
-          : ENV.IS_PRODUCTION && actualAppId !== productionAppId
-            ? `production is using Stream app ${actualAppId}, not the production app ${productionAppId}`
-            : null;
-
-    if (problem) {
-      throw new Error(`Refusing to start: ${problem}.`);
+    if (configuredAppId !== actualAppId) {
+      throw new Error(
+        `Refusing to start: STREAM_APP_ID is ${configuredAppId} but the API key belongs to app ${actualAppId}.`,
+      );
     }
+
     this.logger.log(`Stream app identity verified (app ${actualAppId}).`);
   }
 

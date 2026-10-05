@@ -183,15 +183,6 @@ export class ENV {
   }
 
   /**
-   * The production Stream app's id. When set, boot refuses a mismatch: a
-   * non-production backend whose key belongs to this app (staging test calls
-   * would ring real users), or a production backend whose key doesn't.
-   */
-  static get STREAM_PRODUCTION_APP_ID(): string {
-    return configService.get<string>('STREAM_PRODUCTION_APP_ID', '').trim();
-  }
-
-  /**
    * Monthly participant-minute allowance of the Stream plan. The Maker plan has
    * hard limits, so running out means calls stop working. Unset: no alert.
    */
