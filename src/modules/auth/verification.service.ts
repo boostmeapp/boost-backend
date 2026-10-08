@@ -15,7 +15,6 @@ import {
   VerificationTokenType,
 } from '../../database/schemas/verification/verification-token.schema';
 import { MailerService } from '../mailer/mailer.service';
-import { ENV } from '../../config';
 import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
 
 const OTP_TTL_MINUTES: Record<VerificationTokenType, number> = {
@@ -94,8 +93,10 @@ export class VerificationService {
       ),
     });
 
-    const resetUrl = `${ENV.FRONTEND_URL}/reset-password?token=${token}&email=${encodeURIComponent(normalized)}`;
-    await this.mailerService.sendPasswordResetLink(normalized, resetUrl, otp);
+    // The token is still minted and stored, so any link already in an inbox —
+    // and the /reset-link route that redeems one — keeps working. It is simply
+    // no longer emailed: the code is the only route we hand out.
+    await this.mailerService.sendPasswordResetOtp(normalized, otp);
     return { sent: true };
   }
 
