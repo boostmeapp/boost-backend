@@ -345,6 +345,22 @@ export class ENV {
     ].filter(Boolean);
   }
 
+  // Force update. The oldest app version each store build may still run; an
+  // older install is sent to the store. Empty = no gate for that platform.
+  static get APP_MIN_VERSION_IOS(): string {
+    return configService.get<string>('APP_MIN_VERSION_IOS', '').trim();
+  }
+
+  static get APP_MIN_VERSION_ANDROID(): string {
+    return configService.get<string>('APP_MIN_VERSION_ANDROID', '').trim();
+  }
+
+  /** false = the update prompt can be dismissed ("Later") instead of blocking. */
+  static get APP_FORCE_UPDATE(): boolean {
+    const raw = configService.get<string>('APP_FORCE_UPDATE', 'true');
+    return raw !== 'false' && raw !== '0';
+  }
+
   // Deep-link scheme for mobile reset password (expo-router)
   static get APP_DEEP_LINK_SCHEME(): string {
     // Must match `scheme` in the app's app.config.js, or reset links open nothing.
