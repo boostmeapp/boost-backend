@@ -84,7 +84,7 @@ export class AdminController {
     @Query('limit') limit?: string,
   ) {
     const limitNum = limit ? parseInt(limit, 10) : 100;
-    return this.adminService.getBoostsByStatus(status as any, limitNum);
+    return this.adminService.getBoostsByStatus(status, limitNum);
   }
 
   // Reward management

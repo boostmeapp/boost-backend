@@ -19,9 +19,11 @@ import {
 import { Comment } from '../comments/comment.schema';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionService } from '../transaction/transaction.service';
-import { BoostService } from '../boost/boost.service';
 import { RewardService } from '../reward/reward.service';
-import { Boost, BoostStatus } from '../../database/schemas/boost/boost.schema';
+import {
+  BoostCampaign,
+  CampaignStatus,
+} from '../../database/schemas/boost-campaign/boost-campaign.schema';
 import { TransactionStatus } from '../../database/schemas/transaction/transaction.schema';
 import { ResolveReportDto, ResolveAction } from './dto/resolve-report.dto';
 import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
@@ -36,10 +38,10 @@ export class AdminService {
     @InjectModel(Video.name) private videoModel: Model<Video>,
     @InjectModel(Report.name) private reportModel: Model<Report>,
     @InjectModel(Comment.name) private commentModel: Model<Comment>,
-    @InjectModel(Boost.name) private boostModel: Model<Boost>,
+    @InjectModel(BoostCampaign.name)
+    private campaignModel: Model<BoostCampaign>,
     private walletService: WalletService,
     private transactionService: TransactionService,
-    private boostService: BoostService,
     private rewardService: RewardService,
     private callAccountCleanup: CallAccountCleanupService,
   ) {}
@@ -114,13 +116,56 @@ export class AdminService {
     return this.walletService.unlockWallet(userId);
   }
 
-  // Boost management
+  // ── Boost management ──────────────────────────────────────────────
+  //
+  // Reads boost_campaigns, not the legacy boosts collection. Nothing has ever
+  // been written to the latter, so the panel used to report 0 running boosts
+  // however many campaigns were live.
+
   async getAllBoosts(limit: number) {
-    return this.boostService.getAllBoosts(limit);
+    return this.findCampaigns({}, limit);
   }
 
-  async getBoostsByStatus(status: BoostStatus, limit: number) {
-    return this.boostService.getBoostsByStatus(status, limit);
+  async getBoostsByStatus(status: string, limit: number) {
+    const known = Object.values(CampaignStatus) as string[];
+
+    // An unknown status would otherwise match nothing and read as "no boosts"
+    // rather than "that is not a status".
+    if (!known.includes(status)) {
+      throw new BadRequestException(
+        `Unknown boost status "${status}". Expected one of: ${known.join(', ')}.`,
+      );
+    }
+
+    return this.findCampaigns({ status }, limit);
+  }
+
+  /**
+   * Campaigns in the shape the admin app renders.
+   *
+   * The screen was written against the older Boost document, so the fields it
+   * reads — `coins`, `currentViews` — are mapped here rather than changed in
+   * the app, which keeps an older build working against this API.
+   */
+  private async findCampaigns(filter: Record<string, unknown>, limit: number) {
+    const campaigns = await this.campaignModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('user', 'email firstName lastName username profileImage')
+      .populate('video', 'title description thumbnailUrl viewCount')
+      .lean();
+
+    return campaigns.map((c) => ({
+      ...c,
+
+      // What the advertiser actually paid, net of any refund for undelivered
+      // views — the figure the panel labels "Boost Budget".
+      coins: Math.max(0, (c.coinsCharged || 0) - (c.coinsRefunded || 0)),
+
+      // Views this campaign delivered, not the video's lifetime count.
+      currentViews: c.deliveredViews || 0,
+    }));
   }
 
   // Reward management
@@ -182,23 +227,28 @@ export class AdminService {
 
   async getReportStats() {
     const slaCutoff = new Date(Date.now() - SLA_MS);
-    const [pending, reviewing, resolved, dismissed, overdue] = await Promise.all([
-      this.reportModel.countDocuments({ status: ReportStatus.PENDING }),
-      this.reportModel.countDocuments({ status: ReportStatus.REVIEWING }),
-      this.reportModel.countDocuments({ status: ReportStatus.RESOLVED }),
-      this.reportModel.countDocuments({ status: ReportStatus.DISMISSED }),
-      this.reportModel.countDocuments({
-        status: ReportStatus.PENDING,
-        createdAt: { $lt: slaCutoff },
-      }),
-    ]);
+    const [pending, reviewing, resolved, dismissed, overdue] =
+      await Promise.all([
+        this.reportModel.countDocuments({ status: ReportStatus.PENDING }),
+        this.reportModel.countDocuments({ status: ReportStatus.REVIEWING }),
+        this.reportModel.countDocuments({ status: ReportStatus.RESOLVED }),
+        this.reportModel.countDocuments({ status: ReportStatus.DISMISSED }),
+        this.reportModel.countDocuments({
+          status: ReportStatus.PENDING,
+          createdAt: { $lt: slaCutoff },
+        }),
+      ]);
     return { pending, reviewing, resolved, dismissed, overdue };
   }
 
   /**
    * Resolve a report: remove the content, ban the owner, or dismiss.
    */
-  async resolveReport(reportId: string, adminId: string, dto: ResolveReportDto) {
+  async resolveReport(
+    reportId: string,
+    adminId: string,
+    dto: ResolveReportDto,
+  ) {
     const report = await this.reportModel.findById(reportId);
     if (!report) throw new NotFoundException('Report not found');
 
@@ -351,8 +401,8 @@ export class AdminService {
         updatedAt: { $gte: fifteenMinsAgo },
         isBanned: false,
       }),
-      this.boostModel.countDocuments({ status: BoostStatus.ACTIVE }),
-      this.boostModel.distinct('user', { status: BoostStatus.ACTIVE }),
+      this.campaignModel.countDocuments({ status: CampaignStatus.ACTIVE }),
+      this.campaignModel.distinct('user', { status: CampaignStatus.ACTIVE }),
       this.videoModel.countDocuments({}),
       this.videoModel.countDocuments({
         moderationStatus: ModerationStatus.REMOVED,
@@ -366,8 +416,13 @@ export class AdminService {
     ]);
 
     // Active online users (recent active or fallback to active non-banned)
-    const onlineUsers = recentUsersCount > 0 ? recentUsersCount : Math.max(0, totalUsers - bannedUsers);
-    const runningBoostersCount = Array.isArray(runningBoostersList) ? runningBoostersList.length : 0;
+    const onlineUsers =
+      recentUsersCount > 0
+        ? recentUsersCount
+        : Math.max(0, totalUsers - bannedUsers);
+    const runningBoostersCount = Array.isArray(runningBoostersList)
+      ? runningBoostersList.length
+      : 0;
 
     return {
       totalUsers,
