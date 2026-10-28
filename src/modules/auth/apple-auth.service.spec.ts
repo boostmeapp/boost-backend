@@ -145,4 +145,95 @@ describe('AppleAuthService', () => {
       UnauthorizedException,
     );
   });
+
+  describe('token exchange and revoke', () => {
+    const signinKey = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const pem = signinKey.privateKey
+      .export({ format: 'pem', type: 'pkcs8' })
+      .toString();
+
+    /** The form body of the n-th fetch call. */
+    const form = (n = 0) =>
+      Object.fromEntries(fetchMock.mock.calls[n][1].body as URLSearchParams);
+
+    const withSigninKey = () =>
+      ENV.init({
+        get: (k: string, fallback: unknown) =>
+          ({
+            APPLE_SIGNIN_KEY_ID: 'KEY1234567',
+            // As it arrives from .env: one line with literal \n.
+            APPLE_SIGNIN_PRIVATE_KEY: pem.replace(/\n/g, '\\n'),
+          })[k] ?? fallback,
+      } as any);
+
+    afterEach(() =>
+      ENV.init({ get: (_k: string, fallback: unknown) => fallback } as any),
+    );
+
+    it('skips Apple entirely when no Sign in with Apple key is set', async () => {
+      await expect(service.exchangeCode('code')).resolves.toBeNull();
+      await expect(service.revoke('refresh')).resolves.toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('exchanges the code with a client secret signed by our key', async () => {
+      withSigninKey();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ refresh_token: 'apple-refresh' }),
+      } as Response);
+
+      await expect(service.exchangeCode('the-code')).resolves.toBe(
+        'apple-refresh',
+      );
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://appleid.apple.com/auth/token',
+      );
+      const body = form();
+      expect(body).toMatchObject({
+        client_id: BUNDLE_ID,
+        code: 'the-code',
+        grant_type: 'authorization_code',
+      });
+      expect(
+        jwt.verify(body.client_secret, signinKey.publicKey, {
+          algorithms: ['ES256'],
+        }),
+      ).toMatchObject({
+        iss: 'MYJNL7NN38',
+        sub: BUNDLE_ID,
+        aud: 'https://appleid.apple.com',
+      });
+    });
+
+    it('returns null when Apple refuses the code', async () => {
+      withSigninKey();
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => '{"error":"invalid_grant"}',
+      } as Response);
+      await expect(service.exchangeCode('used-code')).resolves.toBeNull();
+    });
+
+    it('revokes the refresh token', async () => {
+      withSigninKey();
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+      await service.revoke('apple-refresh');
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://appleid.apple.com/auth/revoke',
+      );
+      expect(form()).toMatchObject({
+        client_id: BUNDLE_ID,
+        token: 'apple-refresh',
+        token_type_hint: 'refresh_token',
+      });
+    });
+
+    it('never throws from revoke, so account deletion still succeeds', async () => {
+      withSigninKey();
+      fetchMock.mockRejectedValue(new Error('Apple unreachable'));
+      await expect(service.revoke('apple-refresh')).resolves.toBeUndefined();
+    });
+  });
 });

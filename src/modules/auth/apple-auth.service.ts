@@ -13,6 +13,9 @@ const KEYS_TTL_MS = 24 * 60 * 60 * 1000;
 // A kid we have not seen means Apple rotated keys; refetch, but not on every
 // request a forged kid could trigger.
 const UNKNOWN_KID_REFETCH_MS = 60 * 1000;
+// Token exchange and revoke run on the sign-in and deletion paths; never let a
+// slow Apple hold those up.
+const APPLE_REQUEST_TIMEOUT_MS = 10 * 1000;
 
 export interface AppleIdentity {
   appleId: string;
@@ -111,6 +114,83 @@ export class AppleAuthService {
       email,
       isPrivateEmail: isTrue(payload.is_private_email),
     };
+  }
+
+  /**
+   * Swap the single-use authorization code for a refresh token, kept only so it
+   * can be revoked when the account is deleted. Null on any failure.
+   */
+  async exchangeCode(code: string): Promise<string | null> {
+    if (!this.canCallApple) return null;
+    try {
+      const clientId = ENV.APPLE_BUNDLE_ID;
+      const res = await this.post('/auth/token', {
+        client_id: clientId,
+        client_secret: this.clientSecret(clientId),
+        code,
+        grant_type: 'authorization_code',
+      });
+      if (!res.ok) {
+        this.logger.warn(
+          `Apple code exchange failed: ${res.status} ${await res.text()}`,
+        );
+        return null;
+      }
+      const data = (await res.json()) as { refresh_token?: string };
+      return data.refresh_token ?? null;
+    } catch (err) {
+      this.logger.warn(`Apple code exchange failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Revoke our Sign in with Apple tokens. App Review requires this when the
+   * user deletes their account (Guideline 5.1.1(v)). Never throws: the
+   * deletion must succeed even if Apple is unreachable.
+   */
+  async revoke(refreshToken: string): Promise<void> {
+    if (!this.canCallApple) return;
+    try {
+      const clientId = ENV.APPLE_BUNDLE_ID;
+      const res = await this.post('/auth/revoke', {
+        client_id: clientId,
+        client_secret: this.clientSecret(clientId),
+        token: refreshToken,
+        token_type_hint: 'refresh_token',
+      });
+      if (!res.ok) {
+        this.logger.warn(`Apple revoke failed: ${res.status} ${await res.text()}`);
+      }
+    } catch (err) {
+      this.logger.warn(`Apple revoke failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Token endpoints need the .p8 key; without it, exchange/revoke are skipped. */
+  private get canCallApple(): boolean {
+    return !!(ENV.APPLE_SIGNIN_KEY_ID && ENV.APPLE_SIGNIN_PRIVATE_KEY);
+  }
+
+  /** Short-lived ES256 client secret Apple requires on /auth/token and /auth/revoke. */
+  private clientSecret(clientId: string): string {
+    return jwt.sign({}, ENV.APPLE_SIGNIN_PRIVATE_KEY, {
+      algorithm: 'ES256',
+      keyid: ENV.APPLE_SIGNIN_KEY_ID,
+      issuer: ENV.APPLE_TEAM_ID,
+      audience: APPLE_ISSUER,
+      subject: clientId,
+      expiresIn: '5m',
+    });
+  }
+
+  private post(path: string, form: Record<string, string>): Promise<Response> {
+    return fetch(`${APPLE_ISSUER}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(form),
+      signal: AbortSignal.timeout(APPLE_REQUEST_TIMEOUT_MS),
+    });
   }
 
   /** Apple's public key for `kid`, from a key set refreshed daily. */

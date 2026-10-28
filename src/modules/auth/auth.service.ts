@@ -73,7 +73,7 @@ export class AuthService {
       dto.identityToken,
       dto.nonce,
     );
-    return this.signInWithProvider({
+    const result = await this.signInWithProvider({
       provider: AuthProvider.APPLE,
       providerId: identity.appleId,
       email: identity.email,
@@ -81,6 +81,26 @@ export class AuthService {
       firstName: cleanName(dto.firstName),
       lastName: cleanName(dto.lastName),
     });
+
+    if (dto.authorizationCode) {
+      // Fire-and-forget: sign-in must not wait on, or fail because of, Apple.
+      // Stored with updateOne, not on the loaded document, so it never reaches
+      // the response.
+      this.appleAuthService
+        .exchangeCode(dto.authorizationCode)
+        .then(async (token) => {
+          if (!token) return;
+          await this.userModel.updateOne(
+            { _id: result.user._id },
+            { $set: { appleRefreshToken: token } },
+          );
+        })
+        .catch((err) =>
+          this.logger.error('Failed to store Apple refresh token', err as Error),
+        );
+    }
+
+    return result;
   }
 
   /**

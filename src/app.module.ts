@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AppleAuthModule } from './modules/auth/apple-auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { FollowsModule } from './modules/follows/follows.module';
 import { StoriesModule } from './modules/stories/stories.module';
@@ -104,6 +105,7 @@ ConfigModule.forRoot({
     NotificationModule,
     MailerModule,
     AuthModule,
+    AppleAuthModule,
     UsersModule,
     FollowsModule,
     StoriesModule,

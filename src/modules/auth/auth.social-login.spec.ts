@@ -26,7 +26,8 @@ describe('AuthService social sign-in (Google + Apple)', () => {
   let users: Record<string, any>[];
   let service: AuthService;
   let google: { verify: jest.Mock };
-  let apple: { verify: jest.Mock };
+  let apple: { verify: jest.Mock; exchangeCode: jest.Mock };
+  let updateOne: jest.Mock;
 
   const appleDto = (extra: Record<string, string> = {}) => ({
     identityToken: 'x'.repeat(30),
@@ -36,7 +37,9 @@ describe('AuthService social sign-in (Google + Apple)', () => {
 
   beforeEach(() => {
     users = [];
+    updateOne = jest.fn(async () => ({}));
     const userModel = {
+      updateOne,
       findOne: jest.fn(
         async (q: Record<string, unknown>) =>
           users.find((u) => Object.entries(q).every(([k, v]) => u[k] === v)) ??
@@ -49,7 +52,7 @@ describe('AuthService social sign-in (Google + Apple)', () => {
       }),
     };
     google = { verify: jest.fn() };
-    apple = { verify: jest.fn() };
+    apple = { verify: jest.fn(), exchangeCode: jest.fn() };
 
     service = new AuthService(
       { ensureAdminRole: jest.fn(async (u) => u) } as any,
@@ -141,6 +144,55 @@ describe('AuthService social sign-in (Google + Apple)', () => {
       expect(res.user).toMatchObject({
         email: 'jane@example.com',
         firstName: 'Jane',
+      });
+    });
+
+    describe('authorization code', () => {
+      /** The exchange is fire-and-forget; let it settle. */
+      const settle = () => new Promise((r) => setImmediate(r));
+
+      beforeEach(() => {
+        apple.verify.mockResolvedValue({
+          appleId: 'a-1',
+          email: 'jane@example.com',
+          isPrivateEmail: false,
+        });
+      });
+
+      it('stores the refresh token outside the returned user', async () => {
+        apple.exchangeCode.mockResolvedValue('apple-refresh');
+        const res = await service.loginWithApple(
+          appleDto({ authorizationCode: 'code' }),
+        );
+        await settle();
+
+        expect(apple.exchangeCode).toHaveBeenCalledWith('code');
+        expect(updateOne).toHaveBeenCalledWith(
+          { _id: res.user._id },
+          { $set: { appleRefreshToken: 'apple-refresh' } },
+        );
+        expect(res.user).not.toHaveProperty('appleRefreshToken');
+      });
+
+      it('signs in even when the exchange fails', async () => {
+        apple.exchangeCode.mockRejectedValue(new Error('Apple down'));
+        await expect(
+          service.loginWithApple(appleDto({ authorizationCode: 'code' })),
+        ).resolves.toHaveProperty('accessToken');
+        await settle();
+        expect(updateOne).not.toHaveBeenCalled();
+      });
+
+      it('stores nothing when Apple returns no token', async () => {
+        apple.exchangeCode.mockResolvedValue(null);
+        await service.loginWithApple(appleDto({ authorizationCode: 'code' }));
+        await settle();
+        expect(updateOne).not.toHaveBeenCalled();
+      });
+
+      it('does not call Apple without a code', async () => {
+        await service.loginWithApple(appleDto());
+        expect(apple.exchangeCode).not.toHaveBeenCalled();
       });
     });
 
