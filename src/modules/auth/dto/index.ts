@@ -2,6 +2,7 @@ export * from './register.dto';
 export * from './login.dto';
 export * from './google-login.dto';
 export * from './apple-login.dto';
+export * from './apple-notification.dto';
 export * from './refresh-token.dto';
 export * from './email.dto';
 export * from './verify-email.dto';

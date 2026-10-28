@@ -14,6 +14,7 @@ import {
   LoginDto,
   GoogleLoginDto,
   AppleLoginDto,
+  AppleNotificationDto,
   RefreshTokenDto,
   EmailDto,
   VerifyEmailDto,
@@ -57,6 +58,15 @@ export class AuthController {
   @Post('apple')
   async loginWithApple(@Body() dto: AppleLoginDto) {
     return this.authService.loginWithApple(dto);
+  }
+
+  // Sign in with Apple server-to-server notifications. Authenticated by
+  // Apple's signature on the payload, not by a session.
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('apple/notifications')
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    return this.authService.handleAppleNotification(dto.payload);
   }
 
   @Public()

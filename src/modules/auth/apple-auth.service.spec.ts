@@ -146,6 +146,75 @@ describe('AppleAuthService', () => {
     );
   });
 
+  describe('server-to-server notifications', () => {
+    /** A notification as Apple would send it: `events` is a JSON string. */
+    const notification = (
+      events: Record<string, unknown> | string,
+      opts: jwt.SignOptions = {},
+    ) =>
+      jwt.sign(
+        {
+          events: typeof events === 'string' ? events : JSON.stringify(events),
+        },
+        privateKey,
+        {
+          algorithm: 'RS256',
+          keyid: 'test-kid',
+          issuer: 'https://appleid.apple.com',
+          audience: BUNDLE_ID,
+          ...opts,
+        },
+      );
+
+    it('returns the event from a genuine notification', async () => {
+      const payload = notification({
+        type: 'account-delete',
+        sub: 'apple-sub-1',
+        email: 'ABC@privaterelay.appleid.com',
+        is_private_email: 'true',
+        event_time: 1700000000000,
+      });
+      await expect(service.verifyNotification(payload)).resolves.toEqual({
+        type: 'account-delete',
+        appleId: 'apple-sub-1',
+        email: 'abc@privaterelay.appleid.com',
+        isPrivateEmail: true,
+      });
+    });
+
+    it.each([
+      [
+        'another app as audience',
+        () =>
+          notification(
+            { type: 'consent-revoked', sub: 's' },
+            { audience: 'com.other.app' },
+          ),
+      ],
+      [
+        'a payload signed by someone else',
+        () =>
+          jwt.sign(
+            { events: JSON.stringify({ type: 'consent-revoked', sub: 's' }) },
+            generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey,
+            {
+              algorithm: 'RS256',
+              keyid: 'test-kid',
+              issuer: 'https://appleid.apple.com',
+              audience: BUNDLE_ID,
+            },
+          ),
+      ],
+      ['an event without sub', () => notification({ type: 'consent-revoked' })],
+      ['unparseable events', () => notification('{not json')],
+      ['junk', () => 'not-a-real-token-at-all-xxxxxxxx'],
+    ])('rejects %s', async (_case, makePayload) => {
+      await expect(
+        service.verifyNotification(makePayload()),
+      ).resolves.toBeNull();
+    });
+  });
+
   describe('token exchange and revoke', () => {
     const signinKey = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const pem = signinKey.privateKey

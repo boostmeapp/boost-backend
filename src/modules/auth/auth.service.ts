@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -343,6 +344,69 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
+  }
+
+  /**
+   * Apple's server-to-server notification for Sign in with Apple. Every effect
+   * is idempotent, so Apple's retries are harmless. An unverifiable payload is
+   * a 400; database errors propagate so Apple retries the delivery.
+   */
+  async handleAppleNotification(
+    signedPayload: string,
+  ): Promise<{ received: true }> {
+    const event = await this.appleAuthService.verifyNotification(signedPayload);
+    if (!event) throw new BadRequestException('Invalid notification');
+
+    const user = await this.userModel.findOne({ appleId: event.appleId });
+    if (!user) {
+      // Never signed in here, or the account is already deleted.
+      this.logger.log(`Apple ${event.type} for an unknown Apple ID; ignored`);
+      return { received: true };
+    }
+
+    switch (event.type) {
+      case 'consent-revoked':
+      case 'account-delete': {
+        // Apple has already invalidated its tokens. End the sessions; keep
+        // appleId so the user can sign in with Apple again later.
+        const set: Record<string, unknown> = { sessionsRevokedAt: new Date() };
+
+        const appleOnly =
+          user.authProviders?.length === 1 &&
+          user.authProviders[0] === AuthProvider.APPLE;
+        if (
+          event.type === 'account-delete' &&
+          appleOnly &&
+          (user.isPrivateEmail || event.isPrivateEmail)
+        ) {
+          // No password, no other provider, and a relay inbox that died with
+          // the Apple ID: nobody can ever reach this account again.
+          set.isActive = false;
+        }
+
+        await this.userModel.updateOne(
+          { _id: user._id },
+          { $set: set, $unset: { appleRefreshToken: 1 } },
+        );
+        this.logger.log(
+          `Apple ${event.type} for ${user.email}: sessions ended` +
+            (set.isActive === false ? ', account deactivated' : ''),
+        );
+        break;
+      }
+
+      case 'email-disabled':
+      case 'email-enabled':
+        // Relay forwarding toggled. While disabled, our emails to this
+        // address bounce; nothing to change on our side.
+        this.logger.log(`Apple ${event.type} for ${user.email}`);
+        break;
+
+      default:
+        this.logger.warn(`Unknown Apple notification type ${event.type}; ignored`);
+    }
+
+    return { received: true };
   }
 
   async logout(userId: string): Promise<void> {

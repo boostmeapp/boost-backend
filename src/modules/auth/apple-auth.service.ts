@@ -24,6 +24,17 @@ export interface AppleIdentity {
   isPrivateEmail: boolean;
 }
 
+/**
+ * A Sign in with Apple server-to-server notification. `type` is one of
+ * consent-revoked, account-delete, email-disabled, email-enabled.
+ */
+export interface AppleNotificationEvent {
+  type: string;
+  appleId: string;
+  email?: string;
+  isPrivateEmail: boolean;
+}
+
 /** Apple sends some boolean claims as the strings "true"/"false". */
 const isTrue = (v: unknown) => v === true || v === 'true';
 
@@ -57,27 +68,7 @@ export class AppleAuthService {
 
     let payload: jwt.JwtPayload;
     try {
-      // Checks the signature against Apple's public keys, plus issuer,
-      // expiry and that the audience is one of our own client IDs.
-      payload = await new Promise<jwt.JwtPayload>((resolve, reject) =>
-        jwt.verify(
-          identityToken,
-          (header, cb) => {
-            void this.signingKey(header.kid)
-              .then((key) => cb(null, key))
-              .catch((err: Error) => cb(err));
-          },
-          {
-            algorithms: ['RS256'],
-            issuer: APPLE_ISSUER,
-            audience: audience as [string, ...string[]],
-          },
-          (err, decoded) =>
-            err || !decoded || typeof decoded === 'string'
-              ? reject(err ?? new Error('Malformed token'))
-              : resolve(decoded),
-        ),
-      );
+      payload = await this.verifyAppleJwt(identityToken, audience);
     } catch (err) {
       this.logger.warn(
         `Apple identity token rejected: ${(err as Error).message}`,
@@ -113,6 +104,54 @@ export class AppleAuthService {
       appleId: payload.sub,
       email,
       isPrivateEmail: isTrue(payload.is_private_email),
+    };
+  }
+
+  /**
+   * Verify a server-to-server notification and return the event it carries.
+   * Null when the payload is not a genuine Apple notification for our app.
+   */
+  async verifyNotification(
+    signedPayload: string,
+  ): Promise<AppleNotificationEvent | null> {
+    let payload: jwt.JwtPayload;
+    try {
+      payload = await this.verifyAppleJwt(signedPayload, ENV.APPLE_CLIENT_IDS);
+    } catch (err) {
+      this.logger.warn(
+        `Apple notification rejected: ${(err as Error).message}`,
+      );
+      return null;
+    }
+
+    // `events` is a JSON string in Apple's payload; tolerate an object too.
+    let events: Record<string, unknown>;
+    try {
+      events =
+        typeof payload.events === 'string'
+          ? JSON.parse(payload.events)
+          : payload.events;
+    } catch {
+      events = {};
+    }
+
+    if (
+      typeof events?.type !== 'string' ||
+      typeof events.sub !== 'string' ||
+      !events.sub
+    ) {
+      this.logger.warn('Apple notification rejected: missing type or sub');
+      return null;
+    }
+
+    return {
+      type: events.type,
+      appleId: events.sub,
+      email:
+        typeof events.email === 'string'
+          ? events.email.trim().toLowerCase()
+          : undefined,
+      isPrivateEmail: isTrue(events.is_private_email),
     };
   }
 
@@ -191,6 +230,38 @@ export class AppleAuthService {
       body: new URLSearchParams(form),
       signal: AbortSignal.timeout(APPLE_REQUEST_TIMEOUT_MS),
     });
+  }
+
+  /**
+   * Checks the signature against Apple's public keys, plus issuer, expiry and
+   * that the audience is one of our own client IDs. Rejects on any failure.
+   */
+  private verifyAppleJwt(
+    token: string,
+    audience: string[],
+  ): Promise<jwt.JwtPayload> {
+    if (!audience.length) {
+      return Promise.reject(new Error('No Apple client ID configured'));
+    }
+    return new Promise<jwt.JwtPayload>((resolve, reject) =>
+      jwt.verify(
+        token,
+        (header, cb) => {
+          void this.signingKey(header.kid)
+            .then((key) => cb(null, key))
+            .catch((err: Error) => cb(err));
+        },
+        {
+          algorithms: ['RS256'],
+          issuer: APPLE_ISSUER,
+          audience: audience as [string, ...string[]],
+        },
+        (err, decoded) =>
+          err || !decoded || typeof decoded === 'string'
+            ? reject(err ?? new Error('Malformed token'))
+            : resolve(decoded),
+      ),
+    );
   }
 
   /** Apple's public key for `kid`, from a key set refreshed daily. */
