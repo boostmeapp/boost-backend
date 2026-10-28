@@ -390,6 +390,33 @@ export class ENV {
     ].filter(Boolean);
   }
 
+  // Sign in with Apple: audiences an identity token may carry. The native iOS
+  // flow issues tokens for the bundle ID; a web/Android flow uses the Services ID.
+  static get APPLE_BUNDLE_ID(): string {
+    return configService.get<string>('APPLE_BUNDLE_ID', this.IOS_BUNDLE_ID);
+  }
+
+  static get APPLE_SERVICES_ID(): string {
+    return configService.get<string>('APPLE_SERVICES_ID', '');
+  }
+
+  /** Audiences accepted when verifying an Apple identity token. */
+  static get APPLE_CLIENT_IDS(): string[] {
+    return [this.APPLE_BUNDLE_ID, this.APPLE_SERVICES_ID].filter(Boolean);
+  }
+
+  // The Sign in with Apple key (.p8): signs the client secret used to exchange
+  // and revoke tokens. Not the App Store Connect key.
+  static get APPLE_SIGNIN_KEY_ID(): string {
+    return configService.get<string>('APPLE_SIGNIN_KEY_ID', '');
+  }
+
+  static get APPLE_SIGNIN_PRIVATE_KEY(): string {
+    return configService
+      .get<string>('APPLE_SIGNIN_PRIVATE_KEY', '')
+      .replace(/\\n/g, '\n');
+  }
+
   // Force update. The oldest app version each store build may still run; an
   // older install is sent to the store. Empty = no gate for that platform.
   static get APP_MIN_VERSION_IOS(): string {

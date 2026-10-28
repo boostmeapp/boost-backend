@@ -8,13 +8,36 @@ import { UsersService } from '../users/users.service';
 import { TokenService, AuthResponse } from './token.service';
 import { AuthProvider, User } from '../../database/schemas/user/user.schema';
 import { GoogleAuthService } from './google-auth.service';
+import { AppleAuthService } from './apple-auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import * as bcrypt from 'bcrypt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
 import { VerificationService } from './verification.service';
+
+type SocialProvider = AuthProvider.GOOGLE | AuthProvider.APPLE;
+
+/** A provider-verified identity; nothing here comes from the request body unchecked. */
+interface SocialIdentity {
+  provider: SocialProvider;
+  /** The provider's `sub` claim. */
+  providerId: string;
+  email?: string;
+  isPrivateEmail?: boolean;
+  firstName?: string;
+  lastName?: string;
+}
+
+const PROVIDER_ID_FIELD: Record<SocialProvider, 'googleId' | 'appleId'> = {
+  [AuthProvider.GOOGLE]: 'googleId',
+  [AuthProvider.APPLE]: 'appleId',
+};
+
+/** Names from Apple arrive unsigned in the request body. */
+const cleanName = (v?: string) => v?.trim().slice(0, 50) || undefined;
 
 @Injectable()
 export class AuthService {
@@ -29,44 +52,82 @@ export class AuthService {
     private readonly userModel: Model<User>,
     private readonly verificationService: VerificationService,
     private readonly googleAuthService: GoogleAuthService,
+    private readonly appleAuthService: AppleAuthService,
   ) { }
 
+  /** Sign in (or sign up) with a Google ID token. */
+  async loginWithGoogle(idToken: string): Promise<AuthResponse> {
+    const identity = await this.googleAuthService.verify(idToken);
+    return this.signInWithProvider({
+      provider: AuthProvider.GOOGLE,
+      providerId: identity.googleId,
+      email: identity.email,
+      firstName: identity.firstName,
+      lastName: identity.lastName,
+    });
+  }
+
+  /** Sign in (or sign up) with an Apple identity token. */
+  async loginWithApple(dto: AppleLoginDto): Promise<AuthResponse> {
+    const identity = await this.appleAuthService.verify(
+      dto.identityToken,
+      dto.nonce,
+    );
+    return this.signInWithProvider({
+      provider: AuthProvider.APPLE,
+      providerId: identity.appleId,
+      email: identity.email,
+      isPrivateEmail: identity.isPrivateEmail,
+      firstName: cleanName(dto.firstName),
+      lastName: cleanName(dto.lastName),
+    });
+  }
+
   /**
-   * Sign in (or sign up) with a Google ID token.
+   * Sign in (or sign up) with a provider-verified identity. Google and Apple
+   * share this so the two can never apply different rules.
    *
    * The email address is the identity: an account that already exists for it is
    * linked and reused, never duplicated.
    */
-  async loginWithGoogle(idToken: string): Promise<AuthResponse> {
-    const identity = await this.googleAuthService.verify(idToken);
+  private async signInWithProvider(
+    identity: SocialIdentity,
+  ): Promise<AuthResponse> {
+    const idField = PROVIDER_ID_FIELD[identity.provider];
 
-    // googleId first (fastest, already linked), then email (first-time link).
+    // Provider ID first (fastest, already linked), then email (first-time link).
     let user: User | null = await this.userModel.findOne({
-      googleId: identity.googleId,
+      [idField]: identity.providerId,
     });
 
-    if (!user) {
+    if (!user && identity.email) {
       user = await this.userModel.findOne({ email: identity.email });
     }
 
     if (user) {
       this.assertUsable(user);
 
-      if (!user.googleId) {
-        // First Google sign-in for an existing password account. Safe to link:
-        // Google asserted the address is verified, proving ownership.
-        user.googleId = identity.googleId;
-        this.logger.log(`Linked Google to existing account ${user.email}`);
+      const linkedId = user.get(idField) as string | undefined;
+      if (!linkedId) {
+        // First sign-in with this provider for an existing account. Safe to
+        // link: the provider asserted the address is verified, proving ownership.
+        user.set(idField, identity.providerId);
+        this.logger.log(
+          `Linked ${identity.provider} to existing account ${user.email}`,
+        );
+      } else if (linkedId !== identity.providerId) {
+        // Matched by verified email, but already linked to a different
+        // account at the provider. Allow it; never overwrite the link.
+        this.logger.warn(
+          `${identity.provider} id mismatch for ${user.email}; keeping existing link`,
+        );
       }
 
-      if (!user.authProviders?.includes(AuthProvider.GOOGLE)) {
-        user.authProviders = [
-          ...(user.authProviders || []),
-          AuthProvider.GOOGLE,
-        ];
+      if (!user.authProviders?.includes(identity.provider)) {
+        user.authProviders = [...(user.authProviders || []), identity.provider];
       }
 
-      // Google verified the address, so an unverified account becomes verified.
+      // The provider verified the address, so an unverified account becomes verified.
       if (!user.isEmailVerified) {
         user.isEmailVerified = true;
         user.emailVerifiedAt = new Date();
@@ -82,18 +143,30 @@ export class AuthService {
 
       await user.save();
     } else {
+      if (!identity.email) {
+        // Apple omits the email on repeat authorizations. With no account to
+        // match, there is nothing to sign in to and nothing to create.
+        throw new UnauthorizedException(
+          'Apple did not share your email. On your iPhone open Settings → your name → ' +
+            'Sign-In & Security → Sign in with Apple → Boostra → Stop Using, then try again.',
+        );
+      }
+
       user = await this.userModel.create({
         email: identity.email,
-        googleId: identity.googleId,
+        [idField]: identity.providerId,
         firstName: identity.firstName,
         lastName: identity.lastName,
-        // No password: this account signs in with Google until the user sets
-        // one through the forgot-password flow.
+        isPrivateEmail: !!identity.isPrivateEmail,
+        // No password: this account signs in with its provider until the user
+        // sets one through the forgot-password flow.
         isEmailVerified: true,
         emailVerifiedAt: new Date(),
-        authProviders: [AuthProvider.GOOGLE],
+        authProviders: [identity.provider],
       });
-      this.logger.log(`Created account from Google sign-in: ${user.email}`);
+      this.logger.log(
+        `Created account from ${identity.provider} sign-in: ${user.email}`,
+      );
     }
 
     await this.usersService.ensureAdminRole(user);

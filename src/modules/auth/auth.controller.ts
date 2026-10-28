@@ -13,6 +13,7 @@ import {
   RegisterDto,
   LoginDto,
   GoogleLoginDto,
+  AppleLoginDto,
   RefreshTokenDto,
   EmailDto,
   VerifyEmailDto,
@@ -49,6 +50,13 @@ export class AuthController {
   @Post('google')
   async loginWithGoogle(@Body() dto: GoogleLoginDto) {
     return this.authService.loginWithGoogle(dto.idToken);
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('apple')
+  async loginWithApple(@Body() dto: AppleLoginDto) {
+    return this.authService.loginWithApple(dto);
   }
 
   @Public()

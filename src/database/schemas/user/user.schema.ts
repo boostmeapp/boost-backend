@@ -10,6 +10,7 @@ export enum UserRole {
 export enum AuthProvider {
   PASSWORD = 'password',
   GOOGLE = 'google',
+  APPLE = 'apple',
 }
 
 @Schema({ timestamps: true, collection: 'users' })
@@ -25,6 +26,18 @@ export class User extends Document {
   // Google's `sub` claim. Sparse so the unique index ignores password-only users.
   @Prop({ index: true, sparse: true, unique: true })
   googleId?: string;
+
+  // Apple's `sub` claim: stable per Apple ID for our team. Sparse, like googleId.
+  @Prop({ index: true, sparse: true, unique: true })
+  appleId?: string;
+
+  // The email is an Apple private relay address (…@privaterelay.appleid.com).
+  @Prop({ default: false })
+  isPrivateEmail: boolean;
+
+  // Kept only so it can be revoked when the account is deleted.
+  @Prop({ select: false })
+  appleRefreshToken?: string;
 
   @Prop({ type: [String], enum: AuthProvider, default: [AuthProvider.PASSWORD] })
   authProviders: AuthProvider[];
@@ -185,7 +198,7 @@ UserSchema.methods.validatePassword = async function (
 // Remove password and refreshToken from JSON response
 UserSchema.set('toJSON', {
   transform: (_doc, ret) => {
-    const { password, refreshToken, __v, ...rest } = ret;
+    const { password, refreshToken, appleRefreshToken, __v, ...rest } = ret;
     return rest;
   },
 });
