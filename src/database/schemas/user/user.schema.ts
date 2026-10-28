@@ -100,6 +100,11 @@ export class User extends Document {
   @Prop({ select: false })
   refreshToken?: string;
 
+  // Access and refresh tokens issued before this are rejected. Set when Google
+  // or Apple reclaims an address someone registered without verifying it.
+  @Prop()
+  sessionsRevokedAt?: Date;
+
   // Stripe Connect
   @Prop()
   stripeConnectAccountId?: string; // Stripe Connected Account ID

@@ -1,5 +1,6 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { issuedBeforeRevocation } from './token.service';
 import { AuthProvider } from '../../database/schemas/user/user.schema';
 
 /** Just enough of a Mongoose document for the sign-in path. */
@@ -94,8 +95,14 @@ describe('AuthService social sign-in (Google + Apple)', () => {
       expect(users).toHaveLength(1);
     });
 
-    it('links an existing password account by email', async () => {
-      users.push(makeDoc({ email: 'jane@example.com', firstName: 'Janet' }));
+    it('links an existing verified password account by email', async () => {
+      users.push(
+        makeDoc({
+          email: 'jane@example.com',
+          firstName: 'Janet',
+          isEmailVerified: true,
+        }),
+      );
       const res = await service.loginWithGoogle('id-token');
       expect(users).toHaveLength(1);
       expect(res.user).toMatchObject({
@@ -105,6 +112,14 @@ describe('AuthService social sign-in (Google + Apple)', () => {
         isEmailVerified: true,
         authProviders: [AuthProvider.PASSWORD, AuthProvider.GOOGLE],
       });
+      // A verified owner keeps their password and sessions.
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(res.user).not.toHaveProperty('sessionsRevokedAt');
+    });
+
+    it('records EULA acceptance on a new account', async () => {
+      const res = await service.loginWithGoogle('id-token');
+      expect(res.user.eulaAcceptedAt).toBeInstanceOf(Date);
     });
   });
 
@@ -286,5 +301,124 @@ describe('AuthService social sign-in (Google + Apple)', () => {
         UnauthorizedException,
       );
     });
+
+    it.each([
+      ['Google', () => service.loginWithGoogle('t')],
+      ['Apple', () => service.loginWithApple(appleDto())],
+    ])(
+      '%s reclaims an unverified pre-registration: drops its password and sessions',
+      async (_provider, signIn) => {
+        const squatter = makeDoc({
+          email: 'jane@example.com',
+          authProviders: [AuthProvider.PASSWORD],
+          isEmailVerified: false,
+        });
+        users.push(squatter);
+
+        const res = await signIn();
+
+        expect(updateOne).toHaveBeenCalledWith(
+          { _id: squatter._id },
+          { $unset: { password: 1 } },
+        );
+        expect(res.user.authProviders).not.toContain(AuthProvider.PASSWORD);
+        expect(res.user.sessionsRevokedAt).toBeInstanceOf(Date);
+        expect(res.user.isEmailVerified).toBe(true);
+      },
+    );
+  });
+
+  describe('concurrent first sign-in', () => {
+    it('uses the account a parallel request just created', async () => {
+      const winner = makeDoc({
+        email: 'jane@example.com',
+        appleId: 'a-1',
+        authProviders: [AuthProvider.APPLE],
+      });
+      const userModel = {
+        // Neither lookup finds it: the other request has not committed yet.
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(winner),
+        create: jest.fn(async () => {
+          throw Object.assign(new Error('E11000 duplicate key'), {
+            code: 11000,
+          });
+        }),
+      };
+      service = new AuthService(
+        { ensureAdminRole: jest.fn(async (u) => u) } as any,
+        {
+          generateTokens: jest.fn(async () => ({
+            accessToken: 'a',
+            refreshToken: 'r',
+          })),
+        } as any,
+        { countDocuments: jest.fn(async () => 0) } as any,
+        userModel as any,
+        {} as any,
+        google as any,
+        apple as any,
+      );
+      apple.verify.mockResolvedValue({
+        appleId: 'a-1',
+        email: 'jane@example.com',
+        isPrivateEmail: false,
+      });
+
+      const res = await service.loginWithApple(appleDto());
+
+      expect(res.user._id).toBe(winner._id);
+      expect(userModel.findOne).toHaveBeenLastCalledWith({
+        $or: [{ appleId: 'a-1' }, { email: 'jane@example.com' }],
+      });
+    });
+
+    it('rethrows errors other than a duplicate key', async () => {
+      apple.verify.mockResolvedValue({
+        appleId: 'a-1',
+        email: 'jane@example.com',
+        isPrivateEmail: false,
+      });
+      const boom = new Error('connection lost');
+      (service as any).userModel.create = jest.fn(async () => {
+        throw boom;
+      });
+      await expect(service.loginWithApple(appleDto())).rejects.toBe(boom);
+    });
+  });
+});
+
+describe('issuedBeforeRevocation', () => {
+  const at = (iso?: string) =>
+    ({ sessionsRevokedAt: iso ? new Date(iso) : undefined }) as any;
+  const secs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
+
+  it('accepts every token when nothing was revoked', () => {
+    expect(issuedBeforeRevocation(at(), 0)).toBe(false);
+  });
+
+  it('rejects a token issued before the cut-off', () => {
+    expect(
+      issuedBeforeRevocation(
+        at('2026-10-28T12:00:00.500Z'),
+        secs('2026-10-28T11:59:59Z'),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps the token issued in the same second as the revocation', () => {
+    expect(
+      issuedBeforeRevocation(
+        at('2026-10-28T12:00:00.900Z'),
+        secs('2026-10-28T12:00:00.100Z'),
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a token without iat once sessions were revoked', () => {
+    expect(issuedBeforeRevocation(at('2026-10-28T12:00:00Z'))).toBe(true);
   });
 });

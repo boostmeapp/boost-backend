@@ -149,6 +149,21 @@ export class AuthService {
 
       // The provider verified the address, so an unverified account becomes verified.
       if (!user.isEmailVerified) {
+        // Nobody proved they owned this address before now, so a password set
+        // on it may belong to someone who registered it first. The provider
+        // just proved ownership: drop that password and end its sessions.
+        await this.userModel.updateOne(
+          { _id: user._id },
+          { $unset: { password: 1 } },
+        );
+        user.authProviders = (user.authProviders || []).filter(
+          (p) => p !== AuthProvider.PASSWORD,
+        );
+        user.sessionsRevokedAt = new Date();
+        this.logger.warn(
+          `Reclaimed unverified account ${user.email} via ${identity.provider}; password removed`,
+        );
+
         user.isEmailVerified = true;
         user.emailVerifiedAt = new Date();
       }
@@ -172,21 +187,33 @@ export class AuthService {
         );
       }
 
-      user = await this.userModel.create({
-        email: identity.email,
-        [idField]: identity.providerId,
-        firstName: identity.firstName,
-        lastName: identity.lastName,
-        isPrivateEmail: !!identity.isPrivateEmail,
-        // No password: this account signs in with its provider until the user
-        // sets one through the forgot-password flow.
-        isEmailVerified: true,
-        emailVerifiedAt: new Date(),
-        authProviders: [identity.provider],
-      });
-      this.logger.log(
-        `Created account from ${identity.provider} sign-in: ${user.email}`,
-      );
+      try {
+        user = await this.userModel.create({
+          email: identity.email,
+          [idField]: identity.providerId,
+          firstName: identity.firstName,
+          lastName: identity.lastName,
+          isPrivateEmail: !!identity.isPrivateEmail,
+          // No password: this account signs in with its provider until the user
+          // sets one through the forgot-password flow.
+          isEmailVerified: true,
+          emailVerifiedAt: new Date(),
+          authProviders: [identity.provider],
+          // The social buttons only appear under the terms line (Guideline 1.2).
+          eulaAcceptedAt: new Date(),
+        });
+        this.logger.log(
+          `Created account from ${identity.provider} sign-in: ${user.email}`,
+        );
+      } catch (err) {
+        // A parallel first sign-in created it first; use that one.
+        if ((err as { code?: number }).code !== 11000) throw err;
+        user = await this.userModel.findOne({
+          $or: [{ [idField]: identity.providerId }, { email: identity.email }],
+        });
+        if (!user) throw err;
+        this.assertUsable(user);
+      }
     }
 
     await this.usersService.ensureAdminRole(user);
@@ -312,7 +339,7 @@ export class AuthService {
   async refreshTokens(refreshToken: string): Promise<AuthResponse> {
     try {
       const payload = await this.tokenService.verifyRefreshToken(refreshToken);
-      return this.tokenService.refreshTokens(payload.sub);
+      return await this.tokenService.refreshTokens(payload.sub, payload.iat);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
