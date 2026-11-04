@@ -362,6 +362,11 @@ export class ENV {
       .filter(Boolean);
   }
 
+  // TEST ONLY: enables POST /auth/test/delete-account when set (never in production).
+  static get TEST_DELETE_KEY(): string {
+    return configService.get<string>('TEST_DELETE_KEY', '');
+  }
+
   static get FRONTEND_URL(): string {
     return configService.get<string>('FRONTEND_URL', 'https://boostme.app');
   }

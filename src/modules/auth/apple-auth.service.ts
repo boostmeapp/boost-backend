@@ -38,6 +38,9 @@ export interface AppleNotificationEvent {
 /** Apple sends some boolean claims as the strings "true"/"false". */
 const isTrue = (v: unknown) => v === true || v === 'true';
 
+const isRelayEmail = (email?: string) =>
+  !!email && email.endsWith('@privaterelay.appleid.com');
+
 @Injectable()
 export class AppleAuthService {
   private readonly logger = new Logger(AppleAuthService.name);
@@ -103,7 +106,9 @@ export class AppleAuthService {
     return {
       appleId: payload.sub,
       email,
-      isPrivateEmail: isTrue(payload.is_private_email),
+      // Native iOS tokens can omit is_private_email, so the relay domain counts too.
+      isPrivateEmail:
+        isTrue(payload.is_private_email) || isRelayEmail(email),
     };
   }
 

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
@@ -18,6 +19,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
 import { VerificationService } from './verification.service';
+import { ENV } from '../../config';
 
 type SocialProvider = AuthProvider.GOOGLE | AuthProvider.APPLE;
 
@@ -407,6 +409,32 @@ export class AuthService {
     }
 
     return { received: true };
+  }
+
+  // TEST ONLY: deletes a social (Google/Apple) account by email so sign-up
+  // flows can be re-tested. Disabled in production or when no key is set.
+  async testDeleteSocialAccount(
+    key: string,
+    email: string,
+  ): Promise<{ deleted: true; provider: string }> {
+    const expected = ENV.TEST_DELETE_KEY;
+    if (ENV.IS_PRODUCTION || !expected) {
+      throw new NotFoundException();
+    }
+    if (key !== expected) {
+      throw new UnauthorizedException('Invalid key');
+    }
+    const user = await this.userModel.findOne({
+      email: email.toLowerCase(),
+      $or: [{ googleId: { $exists: true } }, { appleId: { $exists: true } }],
+    });
+    if (!user) {
+      throw new NotFoundException('No social account with that email');
+    }
+    await this.tokenService.revokeRefreshToken(user.id).catch(() => undefined);
+    // Also revokes the Apple token when present.
+    await this.usersService.remove(user.id);
+    return { deleted: true, provider: user.appleId ? 'apple' : 'google' };
   }
 
   async logout(userId: string): Promise<void> {

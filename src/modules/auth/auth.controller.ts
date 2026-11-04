@@ -21,6 +21,7 @@ import {
   ResetPasswordDto,
   VerifyPasswordDto,
   ConfirmAccountDeleteDto,
+  TestDeleteAccountDto,
 } from './dto';
 import { JwtAuthGuard } from '../../common/guards';
 import { Public, CurrentUser } from '../../common/decorators';
@@ -158,5 +159,13 @@ export class AuthController {
     );
     await this.authService.logout(user.id).catch(() => undefined);
     return result;
+  }
+
+  // TEST ONLY: remove before release. See AuthService.testDeleteSocialAccount.
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('test/delete-account')
+  async testDeleteAccount(@Body() dto: TestDeleteAccountDto) {
+    return this.authService.testDeleteSocialAccount(dto.key, dto.email);
   }
 }

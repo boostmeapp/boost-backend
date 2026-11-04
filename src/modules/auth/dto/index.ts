@@ -9,3 +9,4 @@ export * from './verify-email.dto';
 export * from './reset-password.dto';
 export * from './verify-password.dto';
 export * from './confirm-account-delete.dto';
+export * from './test-delete-account.dto';
