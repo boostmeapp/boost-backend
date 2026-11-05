@@ -9,7 +9,18 @@ export interface TokenPayload {
   sub: string;
   email: string;
   role: string;
+  /** Issued-at, in seconds. Added by the signer. */
+  iat?: number;
 }
+
+/**
+ * Whether a token issued at `iat` predates the user's session cut-off.
+ * Compared in whole seconds, as `iat` is, so the token issued in the same
+ * request as the revocation stays valid.
+ */
+export const issuedBeforeRevocation = (user: User, iat?: number): boolean =>
+  !!user.sessionsRevokedAt &&
+  (iat ?? 0) < Math.floor(user.sessionsRevokedAt.getTime() / 1000);
 
 export interface Tokens {
   accessToken: string;
@@ -63,10 +74,13 @@ export class TokenService {
       .exec();
   }
 
-  async refreshTokens(userId: string): Promise<AuthResponse> {
+  async refreshTokens(userId: string, issuedAt?: number): Promise<AuthResponse> {
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new Error('User not found');
+    }
+    if (issuedBeforeRevocation(user, issuedAt)) {
+      throw new Error('Session revoked');
     }
     const tokens = await this.generateTokens(user);
     return {

@@ -27,6 +27,7 @@ import {
 import { TransactionStatus } from '../../database/schemas/transaction/transaction.schema';
 import { ResolveReportDto, ResolveAction } from './dto/resolve-report.dto';
 import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
+import { AppleAuthService } from '../auth/apple-auth.service';
 
 // 24h review SLA per App Store Guideline 1.2
 const SLA_MS = 24 * 60 * 60 * 1000;
@@ -44,6 +45,7 @@ export class AdminService {
     private transactionService: TransactionService,
     private rewardService: RewardService,
     private callAccountCleanup: CallAccountCleanupService,
+    private appleAuthService: AppleAuthService,
   ) {}
 
   async getAllUsers(): Promise<User[]> {
@@ -51,7 +53,10 @@ export class AdminService {
   }
 
   async deleteUser(userId: string): Promise<{ message: string }> {
-    const user = await this.userModel.findById(userId).exec();
+    const user = await this.userModel
+      .findById(userId)
+      .select('+appleRefreshToken')
+      .exec();
 
     if (!user) {
       throw new NotFoundException(`User with ID ${userId} not found`);
@@ -60,6 +65,10 @@ export class AdminService {
     await this.userModel.findByIdAndDelete(userId).exec();
     // Ends live calls, removes them from Stream, strips per-user call data. Never throws.
     await this.callAccountCleanup.onUserDeleted(userId);
+    // Required by App Review for Sign in with Apple accounts. Never throws.
+    if (user.appleRefreshToken) {
+      await this.appleAuthService.revoke(user.appleRefreshToken);
+    }
 
     return {
       message: `User ${user.email} has been permanently deleted`,

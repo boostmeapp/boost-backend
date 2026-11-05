@@ -18,6 +18,7 @@ import { FollowsService } from '../follows/follows.service';
 import { Video } from '../../database/schemas/video/video.schema';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
 import { MediaUrlService } from '../../common/services/media-url.service';
+import { AppleAuthService } from '../auth/apple-auth.service';
 
 
 @Injectable()
@@ -28,6 +29,7 @@ constructor(
   @InjectModel(Follow.name) private followModel: Model<Follow>,
   private readonly mediaUrl: MediaUrlService,
   private readonly notificationService: NotificationService,
+  private readonly appleAuthService: AppleAuthService,
 ) {}
 
   private static readonly USERNAME_CHANGE_DAYS = 60;
@@ -261,9 +263,16 @@ async findByEmail(email: string): Promise<User | null> {
 
 
   async remove(id: string): Promise<void> {
-    const result = await this.userModel.findByIdAndDelete(id).exec();
+    const result = await this.userModel
+      .findByIdAndDelete(id)
+      .select('+appleRefreshToken')
+      .exec();
     if (!result) {
       throw new NotFoundException(`User with ID ${id} not found`);
+    }
+    // Required by App Review for Sign in with Apple accounts. Never throws.
+    if (result.appleRefreshToken) {
+      await this.appleAuthService.revoke(result.appleRefreshToken);
     }
   }
 
@@ -284,7 +293,7 @@ async findByEmail(email: string): Promise<User | null> {
 
     if (!user.password) {
       throw new UnauthorizedException(
-        'This account signs in with Google. Use Forgot password to set a password first.',
+        'This account has no password yet. Use Forgot password to set one.',
       );
     }
 

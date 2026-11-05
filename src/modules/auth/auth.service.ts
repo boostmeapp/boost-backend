@@ -1,20 +1,46 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { TokenService, AuthResponse } from './token.service';
 import { AuthProvider, User } from '../../database/schemas/user/user.schema';
 import { GoogleAuthService } from './google-auth.service';
+import { AppleAuthService } from './apple-auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import * as bcrypt from 'bcrypt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Follow } from 'src/database/schemas/follow/follow.schema';
 import { VerificationService } from './verification.service';
+import { ENV } from '../../config';
+
+type SocialProvider = AuthProvider.GOOGLE | AuthProvider.APPLE;
+
+/** A provider-verified identity; nothing here comes from the request body unchecked. */
+interface SocialIdentity {
+  provider: SocialProvider;
+  /** The provider's `sub` claim. */
+  providerId: string;
+  email?: string;
+  isPrivateEmail?: boolean;
+  firstName?: string;
+  lastName?: string;
+}
+
+const PROVIDER_ID_FIELD: Record<SocialProvider, 'googleId' | 'appleId'> = {
+  [AuthProvider.GOOGLE]: 'googleId',
+  [AuthProvider.APPLE]: 'appleId',
+};
+
+/** Names from Apple arrive unsigned in the request body. */
+const cleanName = (v?: string) => v?.trim().slice(0, 50) || undefined;
 
 @Injectable()
 export class AuthService {
@@ -29,45 +55,118 @@ export class AuthService {
     private readonly userModel: Model<User>,
     private readonly verificationService: VerificationService,
     private readonly googleAuthService: GoogleAuthService,
+    private readonly appleAuthService: AppleAuthService,
   ) { }
 
+  /** Sign in (or sign up) with a Google ID token. */
+  async loginWithGoogle(idToken: string): Promise<AuthResponse> {
+    const identity = await this.googleAuthService.verify(idToken);
+    return this.signInWithProvider({
+      provider: AuthProvider.GOOGLE,
+      providerId: identity.googleId,
+      email: identity.email,
+      firstName: identity.firstName,
+      lastName: identity.lastName,
+    });
+  }
+
+  /** Sign in (or sign up) with an Apple identity token. */
+  async loginWithApple(dto: AppleLoginDto): Promise<AuthResponse> {
+    const identity = await this.appleAuthService.verify(
+      dto.identityToken,
+      dto.nonce,
+    );
+    const result = await this.signInWithProvider({
+      provider: AuthProvider.APPLE,
+      providerId: identity.appleId,
+      email: identity.email,
+      isPrivateEmail: identity.isPrivateEmail,
+      firstName: cleanName(dto.firstName),
+      lastName: cleanName(dto.lastName),
+    });
+
+    if (dto.authorizationCode) {
+      // Fire-and-forget: sign-in must not wait on, or fail because of, Apple.
+      // Stored with updateOne, not on the loaded document, so it never reaches
+      // the response.
+      this.appleAuthService
+        .exchangeCode(dto.authorizationCode)
+        .then(async (token) => {
+          if (!token) return;
+          await this.userModel.updateOne(
+            { _id: result.user._id },
+            { $set: { appleRefreshToken: token } },
+          );
+        })
+        .catch((err) =>
+          this.logger.error('Failed to store Apple refresh token', err as Error),
+        );
+    }
+
+    return result;
+  }
+
   /**
-   * Sign in (or sign up) with a Google ID token.
+   * Sign in (or sign up) with a provider-verified identity. Google and Apple
+   * share this so the two can never apply different rules.
    *
    * The email address is the identity: an account that already exists for it is
    * linked and reused, never duplicated.
    */
-  async loginWithGoogle(idToken: string): Promise<AuthResponse> {
-    const identity = await this.googleAuthService.verify(idToken);
+  private async signInWithProvider(
+    identity: SocialIdentity,
+  ): Promise<AuthResponse> {
+    const idField = PROVIDER_ID_FIELD[identity.provider];
 
-    // googleId first (fastest, already linked), then email (first-time link).
+    // Provider ID first (fastest, already linked), then email (first-time link).
     let user: User | null = await this.userModel.findOne({
-      googleId: identity.googleId,
+      [idField]: identity.providerId,
     });
 
-    if (!user) {
+    if (!user && identity.email) {
       user = await this.userModel.findOne({ email: identity.email });
     }
 
     if (user) {
       this.assertUsable(user);
 
-      if (!user.googleId) {
-        // First Google sign-in for an existing password account. Safe to link:
-        // Google asserted the address is verified, proving ownership.
-        user.googleId = identity.googleId;
-        this.logger.log(`Linked Google to existing account ${user.email}`);
+      const linkedId = user.get(idField) as string | undefined;
+      if (!linkedId) {
+        // First sign-in with this provider for an existing account. Safe to
+        // link: the provider asserted the address is verified, proving ownership.
+        user.set(idField, identity.providerId);
+        this.logger.log(
+          `Linked ${identity.provider} to existing account ${user.email}`,
+        );
+      } else if (linkedId !== identity.providerId) {
+        // Matched by verified email, but already linked to a different
+        // account at the provider. Allow it; never overwrite the link.
+        this.logger.warn(
+          `${identity.provider} id mismatch for ${user.email}; keeping existing link`,
+        );
       }
 
-      if (!user.authProviders?.includes(AuthProvider.GOOGLE)) {
-        user.authProviders = [
-          ...(user.authProviders || []),
-          AuthProvider.GOOGLE,
-        ];
+      if (!user.authProviders?.includes(identity.provider)) {
+        user.authProviders = [...(user.authProviders || []), identity.provider];
       }
 
-      // Google verified the address, so an unverified account becomes verified.
+      // The provider verified the address, so an unverified account becomes verified.
       if (!user.isEmailVerified) {
+        // Nobody proved they owned this address before now, so a password set
+        // on it may belong to someone who registered it first. The provider
+        // just proved ownership: drop that password and end its sessions.
+        await this.userModel.updateOne(
+          { _id: user._id },
+          { $unset: { password: 1 } },
+        );
+        user.authProviders = (user.authProviders || []).filter(
+          (p) => p !== AuthProvider.PASSWORD,
+        );
+        user.sessionsRevokedAt = new Date();
+        this.logger.warn(
+          `Reclaimed unverified account ${user.email} via ${identity.provider}; password removed`,
+        );
+
         user.isEmailVerified = true;
         user.emailVerifiedAt = new Date();
       }
@@ -82,18 +181,42 @@ export class AuthService {
 
       await user.save();
     } else {
-      user = await this.userModel.create({
-        email: identity.email,
-        googleId: identity.googleId,
-        firstName: identity.firstName,
-        lastName: identity.lastName,
-        // No password: this account signs in with Google until the user sets
-        // one through the forgot-password flow.
-        isEmailVerified: true,
-        emailVerifiedAt: new Date(),
-        authProviders: [AuthProvider.GOOGLE],
-      });
-      this.logger.log(`Created account from Google sign-in: ${user.email}`);
+      if (!identity.email) {
+        // Apple omits the email on repeat authorizations. With no account to
+        // match, there is nothing to sign in to and nothing to create.
+        throw new UnauthorizedException(
+          'Apple did not share your email. On your iPhone open Settings → your name → ' +
+            'Sign-In & Security → Sign in with Apple → Boostra → Stop Using, then try again.',
+        );
+      }
+
+      try {
+        user = await this.userModel.create({
+          email: identity.email,
+          [idField]: identity.providerId,
+          firstName: identity.firstName,
+          lastName: identity.lastName,
+          isPrivateEmail: !!identity.isPrivateEmail,
+          // No password: this account signs in with its provider until the user
+          // sets one through the forgot-password flow.
+          isEmailVerified: true,
+          emailVerifiedAt: new Date(),
+          authProviders: [identity.provider],
+          // The social buttons only appear under the terms line (Guideline 1.2).
+          eulaAcceptedAt: new Date(),
+        });
+        this.logger.log(
+          `Created account from ${identity.provider} sign-in: ${user.email}`,
+        );
+      } catch (err) {
+        // A parallel first sign-in created it first; use that one.
+        if ((err as { code?: number }).code !== 11000) throw err;
+        user = await this.userModel.findOne({
+          $or: [{ [idField]: identity.providerId }, { email: identity.email }],
+        });
+        if (!user) throw err;
+        this.assertUsable(user);
+      }
     }
 
     await this.usersService.ensureAdminRole(user);
@@ -219,10 +342,99 @@ export class AuthService {
   async refreshTokens(refreshToken: string): Promise<AuthResponse> {
     try {
       const payload = await this.tokenService.verifyRefreshToken(refreshToken);
-      return this.tokenService.refreshTokens(payload.sub);
+      return await this.tokenService.refreshTokens(payload.sub, payload.iat);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
+  }
+
+  /**
+   * Apple's server-to-server notification for Sign in with Apple. Every effect
+   * is idempotent, so Apple's retries are harmless. An unverifiable payload is
+   * a 400; database errors propagate so Apple retries the delivery.
+   */
+  async handleAppleNotification(
+    signedPayload: string,
+  ): Promise<{ received: true }> {
+    const event = await this.appleAuthService.verifyNotification(signedPayload);
+    if (!event) throw new BadRequestException('Invalid notification');
+
+    const user = await this.userModel.findOne({ appleId: event.appleId });
+    if (!user) {
+      // Never signed in here, or the account is already deleted.
+      this.logger.log(`Apple ${event.type} for an unknown Apple ID; ignored`);
+      return { received: true };
+    }
+
+    switch (event.type) {
+      case 'consent-revoked':
+      case 'account-delete': {
+        // Apple has already invalidated its tokens. End the sessions; keep
+        // appleId so the user can sign in with Apple again later.
+        const set: Record<string, unknown> = { sessionsRevokedAt: new Date() };
+
+        const appleOnly =
+          user.authProviders?.length === 1 &&
+          user.authProviders[0] === AuthProvider.APPLE;
+        if (
+          event.type === 'account-delete' &&
+          appleOnly &&
+          (user.isPrivateEmail || event.isPrivateEmail)
+        ) {
+          // No password, no other provider, and a relay inbox that died with
+          // the Apple ID: nobody can ever reach this account again.
+          set.isActive = false;
+        }
+
+        await this.userModel.updateOne(
+          { _id: user._id },
+          { $set: set, $unset: { appleRefreshToken: 1 } },
+        );
+        this.logger.log(
+          `Apple ${event.type} for ${user.email}: sessions ended` +
+            (set.isActive === false ? ', account deactivated' : ''),
+        );
+        break;
+      }
+
+      case 'email-disabled':
+      case 'email-enabled':
+        // Relay forwarding toggled. While disabled, our emails to this
+        // address bounce; nothing to change on our side.
+        this.logger.log(`Apple ${event.type} for ${user.email}`);
+        break;
+
+      default:
+        this.logger.warn(`Unknown Apple notification type ${event.type}; ignored`);
+    }
+
+    return { received: true };
+  }
+
+  // TEST ONLY: deletes a social (Google/Apple) account by email so sign-up
+  // flows can be re-tested. Disabled in production or when no key is set.
+  async testDeleteSocialAccount(
+    key: string,
+    email: string,
+  ): Promise<{ deleted: true; provider: string }> {
+    const expected = ENV.TEST_DELETE_KEY;
+    if (ENV.IS_PRODUCTION || !expected) {
+      throw new NotFoundException();
+    }
+    if (key !== expected) {
+      throw new UnauthorizedException('Invalid key');
+    }
+    const user = await this.userModel.findOne({
+      email: email.toLowerCase(),
+      $or: [{ googleId: { $exists: true } }, { appleId: { $exists: true } }],
+    });
+    if (!user) {
+      throw new NotFoundException('No social account with that email');
+    }
+    await this.tokenService.revokeRefreshToken(user.id).catch(() => undefined);
+    // Also revokes the Apple token when present.
+    await this.usersService.remove(user.id);
+    return { deleted: true, provider: user.appleId ? 'apple' : 'google' };
   }
 
   async logout(userId: string): Promise<void> {

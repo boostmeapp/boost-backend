@@ -9,13 +9,17 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomBytes, randomInt } from 'crypto';
 import * as bcrypt from 'bcrypt';
-import { User } from '../../database/schemas/user/user.schema';
+import {
+  AuthProvider,
+  User,
+} from '../../database/schemas/user/user.schema';
 import {
   VerificationToken,
   VerificationTokenType,
 } from '../../database/schemas/verification/verification-token.schema';
 import { MailerService } from '../mailer/mailer.service';
 import { CallAccountCleanupService } from '../call/call-account-cleanup.service';
+import { AppleAuthService } from './apple-auth.service';
 
 const OTP_TTL_MINUTES: Record<VerificationTokenType, number> = {
   [VerificationTokenType.EMAIL_VERIFY]: 10,
@@ -36,6 +40,7 @@ export class VerificationService {
     private readonly tokenModel: Model<VerificationToken>,
     private readonly mailerService: MailerService,
     private readonly callAccountCleanup: CallAccountCleanupService,
+    private readonly appleAuthService: AppleAuthService,
   ) {}
 
   // ----- Email verification -----
@@ -140,6 +145,10 @@ export class VerificationService {
     }
 
     user.password = args.newPassword; // pre-save hook hashes
+    // A social-only account now has a password too.
+    if (!user.authProviders?.includes(AuthProvider.PASSWORD)) {
+      user.authProviders = [...(user.authProviders || []), AuthProvider.PASSWORD];
+    }
     await user.save();
 
     record.used = true;
@@ -155,7 +164,7 @@ export class VerificationService {
     if (!user) throw new NotFoundException('User not found');
     if (!user.password) {
       throw new UnauthorizedException(
-        'This account signs in with Google. Use Forgot password to set a password first.',
+        'This account has no password yet. Use Forgot password to set one.',
       );
     }
     const ok = await bcrypt.compare(password, user.password);
@@ -184,7 +193,9 @@ export class VerificationService {
     otp: string,
     password?: string,
   ): Promise<{ deleted: true }> {
-    const user = await this.userModel.findById(userId).select('+password');
+    const user = await this.userModel
+      .findById(userId)
+      .select('+password +appleRefreshToken');
     if (!user) throw new NotFoundException('User not found');
 
     // The emailed one-time code is the proof of ownership here. A password is
@@ -201,6 +212,10 @@ export class VerificationService {
     await this.userModel.findByIdAndDelete(user.id);
     // Ends live calls, removes them from Stream, strips per-user call data. Never throws.
     await this.callAccountCleanup.onUserDeleted(user.id);
+    // Required by App Review for Sign in with Apple accounts. Never throws.
+    if (user.appleRefreshToken) {
+      await this.appleAuthService.revoke(user.appleRefreshToken);
+    }
 
     await this.mailerService.sendAccountDeletedNotice(email).catch(() => {});
     return { deleted: true };

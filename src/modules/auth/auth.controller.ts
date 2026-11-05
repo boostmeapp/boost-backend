@@ -13,12 +13,15 @@ import {
   RegisterDto,
   LoginDto,
   GoogleLoginDto,
+  AppleLoginDto,
+  AppleNotificationDto,
   RefreshTokenDto,
   EmailDto,
   VerifyEmailDto,
   ResetPasswordDto,
   VerifyPasswordDto,
   ConfirmAccountDeleteDto,
+  TestDeleteAccountDto,
 } from './dto';
 import { JwtAuthGuard } from '../../common/guards';
 import { Public, CurrentUser } from '../../common/decorators';
@@ -49,6 +52,22 @@ export class AuthController {
   @Post('google')
   async loginWithGoogle(@Body() dto: GoogleLoginDto) {
     return this.authService.loginWithGoogle(dto.idToken);
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('apple')
+  async loginWithApple(@Body() dto: AppleLoginDto) {
+    return this.authService.loginWithApple(dto);
+  }
+
+  // Sign in with Apple server-to-server notifications. Authenticated by
+  // Apple's signature on the payload, not by a session.
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('apple/notifications')
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    return this.authService.handleAppleNotification(dto.payload);
   }
 
   @Public()
@@ -140,5 +159,13 @@ export class AuthController {
     );
     await this.authService.logout(user.id).catch(() => undefined);
     return result;
+  }
+
+  // TEST ONLY: remove before release. See AuthService.testDeleteSocialAccount.
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('test/delete-account')
+  async testDeleteAccount(@Body() dto: TestDeleteAccountDto) {
+    return this.authService.testDeleteSocialAccount(dto.key, dto.email);
   }
 }

@@ -11,11 +11,13 @@ import { UsersService } from '../../users/users.service';
 import { RedisService } from '../../redis/redis.service';
 import { User } from '../../../database/schemas/user/user.schema';
 import { ENV } from '../../../config';
+import { issuedBeforeRevocation } from '../token.service';
 
 export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  iat?: number;
 }
 
 @Injectable()
@@ -42,6 +44,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');
+    }
+
+    if (issuedBeforeRevocation(user, payload.iat)) {
+      throw new UnauthorizedException('Session expired. Please sign in again.');
     }
 
     void this.touchLastActive(payload.sub);
