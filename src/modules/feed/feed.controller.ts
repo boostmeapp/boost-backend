@@ -16,6 +16,12 @@ export class FeedController {
     return this.feedService.getGlobalFeed(query, user?._id?.toString());
   }
 
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('boosted')
+  async getBoostedFeed(@Query() query: FeedQueryDto, @CurrentUser() user?: User) {
+    return this.feedService.getBoostedFeed(query, user?._id?.toString());
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('following')
   async getFollowingFeed(

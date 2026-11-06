@@ -5,15 +5,24 @@ import { FeedController } from './feed.controller';
 import { Video, VideoSchema } from '../../database/schemas/video/video.schema';
 import { LikesModule } from '../likes/likes.module';
 import { BoostCampaignsModule } from '../boost-campaigns/boost-campaigns.module';
-import { Follow, FollowSchema } from 'src/database/schemas/follow/follow.schema';
+import {
+  Follow,
+  FollowSchema,
+} from 'src/database/schemas/follow/follow.schema';
 import { User, UserSchema } from '../../database/schemas/user/user.schema';
+import {
+  BoostCampaign,
+  BoostCampaignSchema,
+} from '../../database/schemas/boost-campaign/boost-campaign.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([ { name: Video.name, schema: VideoSchema },
+    MongooseModule.forFeature([
+      { name: Video.name, schema: VideoSchema },
       { name: Follow.name, schema: FollowSchema },
-      { name: User.name, schema: UserSchema },])
-    ,
+      { name: User.name, schema: UserSchema },
+      { name: BoostCampaign.name, schema: BoostCampaignSchema },
+    ]),
     LikesModule,
     BoostCampaignsModule,
   ],

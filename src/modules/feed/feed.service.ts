@@ -9,6 +9,7 @@ import { Types } from 'mongoose';
 import { MediaUrlService } from '../../common/services/media-url.service';
 import { FeedQueryDto } from './dto';
 import { BoostDeliveryService } from '../boost-campaigns/boost-delivery.service';
+import { BoostCampaign, CampaignStatus } from '../../database/schemas/boost-campaign/boost-campaign.schema';
 import { BOOST_CONFIG } from '../boost-campaigns/boost-campaigns.config';
 
 
@@ -21,6 +22,7 @@ constructor(
   private likesService: LikesService,
   private mediaUrl: MediaUrlService,
   private boostDelivery: BoostDeliveryService,
+  @InjectModel(BoostCampaign.name) private campaignModel: Model<BoostCampaign>,
 ) {}
 
   /** Fields the mobile client actually reads. Everything else stays on the server. */
@@ -82,7 +84,7 @@ constructor(
     };
   }
 
-  /** One keyset-or-offset paginator for both feeds. Cursor mode when `cursor` is supplied. */
+  /** One keyset-or-offset paginator for all feeds. Cursor mode when `cursor` is supplied. */
   private async paginate(
     baseQuery: Record<string, any>,
     { page = 1, limit = 20, cursor }: FeedQueryDto,
@@ -195,6 +197,32 @@ async getFollowingFeed(userId: string, query: FeedQueryDto) {
       user: { $in: visibleFollowingIds },
       processingStatus: 'ready',
       moderationStatus: { $ne: ModerationStatus.REMOVED },
+    },
+    query,
+    userId,
+  );
+}
+
+/** Browse live promotions. View qualification remains in VideoViewsService. */
+async getBoostedFeed(query: FeedQueryDto, userId?: string) {
+  const now = new Date();
+  const [videoIds, blockedIds] = await Promise.all([
+    this.campaignModel.distinct('video', {
+      status: CampaignStatus.ACTIVE,
+      startAt: { $lte: now },
+      endAt: { $gt: now },
+      $expr: { $lt: ['$deliveredViews', '$targetViews'] },
+    }),
+    this.getBlockedUserIds(userId),
+  ]);
+
+  return this.paginate(
+    {
+      _id: { $in: videoIds },
+      isBoosted: true,
+      processingStatus: 'ready',
+      moderationStatus: { $ne: ModerationStatus.REMOVED },
+      ...(blockedIds.length ? { user: { $nin: blockedIds } } : {}),
     },
     query,
     userId,
